@@ -16,7 +16,11 @@
 # Usage (from a script in this directory):
 #
 #   include(joinpath(@__DIR__, "InclusionTools.jl"))
-#   using .InclusionTools
+#   IT = InclusionTools                  # then call IT.RunInclusionModel(...), ...
+#
+#   (Avoid `using .InclusionTools` in scripts that are re-run in the same REPL
+#    session: every include creates a new module version, and `using` both
+#    versions makes the exported names ambiguous.)
 #
 # Conventions
 #   - Background flow (far field), centred at the inclusion centre (xc, yc):
@@ -274,20 +278,54 @@ end
 # 3. Diagnostics
 # ======================================================================= #
 """
-    Invariants(ε, τ) -> (εII, τII, ψ)
+    Invariants(ε, τ, ηc; τmethod=:centroid) -> (εII, τII, ψ)
 
 Second invariants of strain rate and deviatoric stress on the centroids.
-The shear components (vertices) are averaged to the centroids.
+The shear strain rate (vertices) is averaged to the centroids.
+
+`τmethod`:
+  - `:centroid`   : τ_II = 2 η_c ε̇_II with the centroid viscosity (as in FDCSGm).
+                    Consistent with the local viscosity; recommended for statistics.
+  - `:components` : τ_II from the stress components of the solver (τ_xy uses the
+                    vertex viscosity and is averaged to the centroids). Near the
+                    interface this mixes in stresses of the neighbouring phase.
 """
-function Invariants(ε, τ)
+function Invariants(ε, τ, ηc; τmethod = :centroid)
     av(A)   =   0.25 .* (A[1:end-1, 1:end-1] .+ A[2:end, 1:end-1] .+
                          A[1:end-1, 2:end]   .+ A[2:end, 2:end])
-    εxy     =   av(ε.xy)
-    τxy     =   av(τ.xy)
-    εII     =   sqrt.(0.5 .* (ε.xx.^2 .+ ε.yy.^2) .+ εxy.^2)
-    τII     =   sqrt.(0.5 .* (τ.xx.^2 .+ τ.yy.^2) .+ τxy.^2)
+    εII     =   sqrt.(0.5 .* (ε.xx.^2 .+ ε.yy.^2) .+ av(ε.xy).^2)
+    if τmethod == :centroid
+        τII =   2.0 .* ηc .* εII
+    elseif τmethod == :components
+        τII =   sqrt.(0.5 .* (τ.xx.^2 .+ τ.yy.^2) .+ av(τ.xy).^2)
+    else
+        throw(ArgumentError("τmethod must be :centroid or :components"))
+    end
     return εII, τII, τII .* εII
 end
+
+"""
+    ellipse_radius(s::EllipseSolution, x, y)
+
+Normalized elliptical radius `sqrt((xe/a)² + (ye/b)²)` of the point `(x, y)`
+in the ellipse frame (`< 1` inside, `1` on the interface).
+"""
+function ellipse_radius(s::EllipseSolution, x::Real, y::Real)
+    sθ, cθ  =   sincosd(s.θ)
+    xe      =    (x - s.xc) * cθ + (y - s.yc) * sθ
+    ye      =   -(x - s.xc) * sθ + (y - s.yc) * cθ
+    return sqrt((xe / s.a)^2 + (ye / s.b)^2)
+end
+
+"""
+    bulkmask(s, xg, yg, w)
+
+`true` for grid points farther than about `w` from the inclusion boundary.
+Uses `|r - 1| ⋅ b ≥ w` with the normalized elliptical radius `r`, which excludes
+a band of half-width `w` along the flanks and a wider band (≈ w a/b) at the tips.
+"""
+bulkmask(s::EllipseSolution, xg, yg, w) =
+    [abs(ellipse_radius(s, xg[i], yg[j]) - 1.0) * s.b >= w for i in eachindex(xg), j in eachindex(yg)]
 
 fieldstats(A, mask) = (
     mean = mean(A[mask]), max = maximum(A[mask]),
@@ -318,6 +356,12 @@ Keyword arguments (defaults in brackets):
                          domain solution) or `:background` (unperturbed far field) [:analytical]
   - `nmx`, `nmy`       : markers per cell in x and y [5, 5]
   - `avgm`             : marker-to-grid viscosity averaging, `:arith`, `:harm`, `:geom` [:arith]
+  - `statmask`         : cells used for the inclusion/matrix statistics:
+                         `:pure` (only inclusion or only matrix markers, independent of
+                         `avgm`) or `:geometric` (centroid inside/outside the ellipse) [:pure]
+  - `τmethod`          : `:centroid` (τ_II = 2η ε̇_II) or `:components` [:centroid]
+  - `band`             : half-width of the interface band (in cells) excluded from the
+                         "bulk" errors [2]
   - `niter`            : maximum number of defect-correction iterations [10]
   - `rtol`             : relative residual tolerance [1e-10]
   - `verbose`          : print residuals and errors [true]
@@ -327,6 +371,7 @@ function RunInclusionModel(;
         a = 200.0, b = 200.0, θ = 0.0,
         ηm = 1e23, ηc = 1e21, ε̇bg = 1e-15, deformation = :PureShear,
         bc = :analytical, nmx = 5, nmy = 5, avgm = :arith,
+        statmask = :pure, τmethod = :centroid, band = 2,
         niter = 10, rtol = 1e-10, verbose = true)
 
     # Geometry and grid ------------------------------------------------- #
@@ -348,6 +393,7 @@ function RunInclusionModel(;
         ρ       =   zeros(Float64, NC...),         # no buoyancy (g = 0)
         ηc      =   zeros(Float64, NC...),
         η_ex    =   zeros(Float64, NC.x + 2, NC.y + 2),
+        ph_ex   =   zeros(Float64, NC.x + 2, NC.y + 2),   # inclusion marker fraction
         ηv      =   zeros(Float64, NV...),
         wte     =   zeros(Float64, NC.x + 2, NC.y + 2),
         wtv     =   zeros(Float64, NV...),
@@ -388,6 +434,9 @@ function RunInclusionModel(;
     Markers2Cells(Ma, nmark, MAVG.PC_th, D.η_ex, MAVG.wte_th, D.wte, x, y, Δ, Aparam, η; avgm = avgm)
     D.ηc    .=  D.η_ex[2:end-1, 2:end-1]
     Markers2Vertices(Ma, nmark, MAVG.PV_th, D.ηv, MAVG.wtv_th, D.wtv, x, y, Δ, Aparam, η; avgm = avgm)
+    # fraction of inclusion markers per cell (arithmetic, independent of avgm)
+    Markers2Cells(Ma, nmark, MAVG.PC_th, D.ph_ex, MAVG.wte_th, D.wte, x, y, Δ, Aparam, Float64.(phase))
+    phfrac  =   D.ph_ex[2:end-1, 2:end-1]
 
     # Numbering and system matrix --------------------------------------- #
     off     =   [NV.x * NC.y,
@@ -430,15 +479,53 @@ function RunInclusionModel(;
     vx_num  =   D.vx[:, 2:end-1]
     vy_num  =   D.vy[2:end-1, :]
 
+    # bulk errors: exclude a band of ±band cells around the interface
+    w       =   band * max(Δ.x, Δ.y)
+    bvx     =   bulkmask(sol, x.v, y.c, w)
+    bvy     =   bulkmask(sol, x.c, y.v, w)
+    bP      =   bulkmask(sol, x.c, y.c, w)
+    Pnum_b  =   D.Pt[bP] .- mean(D.Pt[bP])
+    Pana_b  =   Ana.Pa[bP] .- mean(Ana.Pa[bP])
+    # split of the bulk pressure error into matrix and inclusion interior.
+    # The pressure constant is fixed in the matrix bulk, where the solution is
+    # most accurate; the inclusion error is given in % of τ_bg = 2 η_m ε̇_bg
+    # (the analytical inclusion pressure may be zero, e.g. circle in pure shear).
+    τbg     =   2ηm * ε̇bg
+    geoP    =   [isinside(sol, x.c[i], y.c[j]) for i = 1:NC.x, j = 1:NC.y]
+    bPm     =   bP .& .!geoP
+    bPi     =   bP .&   geoP
+    cP      =   mean(D.Pt[bPm] .- Ana.Pa[bPm])
+    ΔPm     =   D.Pt[bPm] .- cP .- Ana.Pa[bPm]
+    ΔPi     =   any(bPi) ? D.Pt[bPi] .- cP .- Ana.Pa[bPi] : [NaN]
+
     err     =   (
         L2_vx   =   relL2(vx_num, Ana.Vxa),   Linf_vx =   relLinf(vx_num, Ana.Vxa),
         L2_vy   =   relL2(vy_num, Ana.Vya),   Linf_vy =   relLinf(vy_num, Ana.Vya),
         L2_P    =   relL2(Pnum, Pana),        Linf_P  =   relLinf(Pnum, Pana),
+        L2_vx_bulk  = relL2(vx_num[bvx], Ana.Vxa[bvx]),  Linf_vx_bulk = relLinf(vx_num[bvx], Ana.Vxa[bvx]),
+        L2_vy_bulk  = relL2(vy_num[bvy], Ana.Vya[bvy]),  Linf_vy_bulk = relLinf(vy_num[bvy], Ana.Vya[bvy]),
+        L2_P_bulk   = relL2(Pnum_b, Pana_b),             Linf_P_bulk  = relLinf(Pnum_b, Pana_b),
+        L2_P_mat    = norm(ΔPm) / norm(Ana.Pa[bPm]) * 100.0,
+        Linf_P_mat  = maximum(abs, ΔPm) / maximum(abs, Ana.Pa[bPm]) * 100.0,
+        rms_P_inc   = sqrt(mean(ΔPi .^ 2)) / τbg * 100.0,       # [% of τ_bg]
+        max_P_inc   = maximum(abs, ΔPi) / τbg * 100.0,          # [% of τ_bg]
     )
 
-    εII, τII, ψ =   Invariants(ε, τ)
-    incmask =   [isinside(sol, x.c[i], y.c[j]) for i = 1:NC.x, j = 1:NC.y]
-    matmask =   .!incmask
+    εII, τII, ψ =   Invariants(ε, τ, D.ηc; τmethod = τmethod)
+    geomask =   [isinside(sol, x.c[i], y.c[j]) for i = 1:NC.x, j = 1:NC.y]
+    if statmask == :pure
+        tol     =   1e-10
+        incmask =   phfrac .>= 1.0 - tol
+        matmask =   phfrac .<= tol
+        if !any(incmask)
+            @warn "No pure inclusion cells (inclusion too small for the grid); using the geometric mask."
+            incmask, matmask = geomask, .!geomask
+        end
+    elseif statmask == :geometric
+        incmask, matmask = geomask, .!geomask
+    else
+        throw(ArgumentError("statmask must be :pure or :geometric"))
+    end
     stats   =   (
         inc = (εII = fieldstats(εII, incmask), τII = fieldstats(τII, incmask), ψ = fieldstats(ψ, incmask)),
         mat = (εII = fieldstats(εII, matmask), τII = fieldstats(τII, matmask), ψ = fieldstats(ψ, matmask)),
@@ -446,7 +533,6 @@ function RunInclusionModel(;
     ana_inc =   inclusion_values(sol)
 
     # background reference values
-    τbg     =   2ηm * ε̇bg
     ref     =   (εII = ε̇bg, τII = τbg, ψ = τbg * ε̇bg)
 
     if verbose
@@ -454,6 +540,14 @@ function RunInclusionModel(;
                 err.L2_vx, err.L2_vy, err.L2_P)
         @printf("   Relative L∞ error  vx: %8.4f %%,  vy: %8.4f %%,  P: %8.4f %%\n",
                 err.Linf_vx, err.Linf_vy, err.Linf_P)
+        @printf("   Bulk (±%d cells excluded) L2 error  vx: %8.4f %%,  vy: %8.4f %%,  P: %8.4f %%\n",
+                band, err.L2_vx_bulk, err.L2_vy_bulk, err.L2_P_bulk)
+        @printf("   Bulk (±%d cells excluded) L∞ error  vx: %8.4f %%,  vy: %8.4f %%,  P: %8.4f %%\n",
+                band, err.Linf_vx_bulk, err.Linf_vy_bulk, err.Linf_P_bulk)
+        @printf("   Bulk pressure error  matrix: L2 %8.4f %%, L∞ %8.4f %% | inclusion: rms %8.4f %%, max %8.4f %% of τ_bg\n",
+                err.L2_P_mat, err.Linf_P_mat, err.rms_P_inc, err.max_P_inc)
+        @printf("   Statistics: %s mask (%d inclusion cells, %d of %d inside the ellipse), τ_II: %s\n",
+                statmask, count(incmask), count(geomask .& incmask), count(geomask), τmethod)
         @printf("   Inclusion ⟨ε̇II⟩/ε̇bg = %.4e (analytical %.4e)\n",
                 stats.inc.εII.mean / ref.εII, ana_inc.εII / ref.εII)
         @printf("   Inclusion ⟨τII⟩/τbg = %.4e (analytical %.4e)\n",
@@ -465,12 +559,14 @@ function RunInclusionModel(;
 
     return (
         params  =   (L = L, H = H, NC = NC, a = a, b = b, θ = θ, ηm = ηm, ηc = ηc,
-                     ε̇bg = ε̇bg, deformation = deformation, bc = bc, avgm = avgm),
+                     ε̇bg = ε̇bg, deformation = deformation, bc = bc, avgm = avgm,
+                     statmask = statmask, τmethod = τmethod, band = band),
         M = M, NC = NC, NV = NV, Δ = Δ, x = x, y = y, sol = sol, Ana = Ana,
         ηc = copy(D.ηc), ηv = copy(D.ηv),
         vx = vx_num, vy = vy_num, P = Pnum, Pana = Pana,
         εII = εII, τII = τII, ψ = ψ,
-        incmask = incmask, stats = stats, ana_inc = ana_inc, ref = ref,
+        incmask = incmask, matmask = matmask, geomask = geomask, phfrac = phfrac,
+        bulkP = bP, stats = stats, ana_inc = ana_inc, ref = ref,
         err = err, residual = RM / R0,
     )
 end
@@ -511,60 +607,78 @@ function PlotFields(r; quiver_step = nothing)
     # centroid velocities for arrows
     vxc     =   0.5 .* (r.vx[1:end-1, :] .+ r.vx[2:end, :])
     vyc     =   0.5 .* (r.vy[:, 1:end-1] .+ r.vy[:, 2:end])
-    st      =   isnothing(quiver_step) ? max(1, r.NC.x ÷ 15) : quiver_step
-    ix, iy  =   1:st:r.NC.x, 1:st:r.NC.y
+    st      =   isnothing(quiver_step) ? max(1, r.NC.x ÷ 12) : quiver_step
+    i0      =   max(1, st ÷ 2)
+    ix, iy  =   i0:st:r.NC.x, i0:st:r.NC.y
     Xq      =   vec(x.c2d[ix, iy]);  Yq = vec(y.c2d[ix, iy])
     U, V    =   vec(vxc[ix, iy]),    vec(vyc[ix, iy])
-    sc      =   0.8 * st * r.Δ.x / max(maximum(hypot.(U, V)), eps())
+    sc      =   0.6 * st * r.Δ.x / max(maximum(hypot.(U, V)), eps())
 
     common  =   (aspect_ratio = :equal, xlims = (M.xmin, M.xmax), ylims = (M.ymin, M.ymax),
-                 framestyle = :box, xlabel = "x [m]", ylabel = "y [m]")
+                 framestyle = :box, xlabel = "x [m]", ylabel = "y [m]",
+                 titlefontsize = 11, tickfontsize = 8)
     p1  =   heatmap(x.c, y.c, log10.(r.ηc)'; color = cgrad(:lapaz, rev = true),
                     title = "\$\\log_{10}\\,\\eta\$ [Pa s]", common...)
-    quiver!(p1, Xq, Yq; quiver = (sc .* U, sc .* V), color = :white, lw = 0.8)
-    p2  =   heatmap(x.c, y.c, _safelog(r.ψ)'; color = :imola, title = "\$\\log_{10}\\,\\psi = \\log_{10}(\\tau_{II}\\dot{\\varepsilon}_{II})\$", common...)
-    p3  =   heatmap(x.c, y.c, _safelog(r.εII)'; color = :batlow, title = "\$\\log_{10}\\,\\dot{\\varepsilon}_{II}\$ [1/s]", common...)
-    p4  =   heatmap(x.c, y.c, _safelog(r.τII)'; color = :nuuk, title = "\$\\log_{10}\\,\\tau_{II}\$ [Pa]", common...)
+    # velocity "arrows": segments scaled with |v| and a dot at the tip
+    # (fixed-size arrow heads dominate where the velocity is small)
+    xs  =   vec(permutedims(hcat(Xq, Xq .+ sc .* U, fill(NaN, length(Xq)))))
+    ys  =   vec(permutedims(hcat(Yq, Yq .+ sc .* V, fill(NaN, length(Yq)))))
+    plot!(p1, xs, ys; color = :darkorange, lw = 1.0, label = "")
+    scatter!(p1, Xq .+ sc .* U, Yq .+ sc .* V; color = :darkorange, markersize = 2,
+             markerstrokewidth = 0, label = "")
+    p2  =   heatmap(x.c, y.c, _safelog(r.ψ)'; color = :imola,
+                    title = "\$\\log_{10}\\,\\psi = \\log_{10}(\\tau_{II}\\dot{\\varepsilon}_{II})\$", common...)
+    p3  =   heatmap(x.c, y.c, _safelog(r.εII)'; color = :batlow,
+                    title = "\$\\log_{10}\\,\\dot{\\varepsilon}_{II}\$ [1/s]", common...)
+    p4  =   heatmap(x.c, y.c, _safelog(r.τII)'; color = :nuuk,
+                    title = "\$\\log_{10}\\,\\tau_{II}\$ [Pa]", common...)
     for p in (p2, p3, p4)
         plot!(p, xo, yo; color = :black, lw = 1, ls = :dash, label = "")
     end
-    return plot(p1, p2, p3, p4; layout = (2, 2), size = (1100, 950),
-                left_margin = 5Plots.mm, bottom_margin = 4Plots.mm)
+    return plot(p1, p2, p3, p4; layout = (2, 2), size = (1150, 1000),
+                left_margin = 5Plots.mm, right_margin = 3Plots.mm, bottom_margin = 4Plots.mm)
 end
 
 """
     PlotComparison(r)
 
 3×3 figure: numerical, analytical, and absolute error (in % of the maximum
-analytical value) for vx, vy, and P.
+analytical value) for vx, vy, and P. Velocities are normalized by
+V_ref = ε̇_bg L, pressure by τ_bg = 2 η_m ε̇_bg.
 """
 function PlotComparison(r)
     x, y, M =   r.x, r.y, r.M
     xo, yo  =   ellipse_outline(r.sol)
+    Vref    =   r.ref.εII * (M.xmax - M.xmin)
+    Pref    =   r.ref.τII
     rows    =   (
-        (num = r.vx, ana = r.Ana.Vxa, xg = x.v, yg = y.c, name = "v_x", cmap = :berlin),
-        (num = r.vy, ana = r.Ana.Vya, xg = x.c, yg = y.v, name = "v_y", cmap = :berlin),
-        (num = r.P,  ana = r.Pana,    xg = x.c, yg = y.c, name = "P",   cmap = :vik),
+        (num = r.vx ./ Vref, ana = r.Ana.Vxa ./ Vref, xg = x.v, yg = y.c,
+         name = "v_x/V_{ref}", ename = "v_x", cmap = :berlin),
+        (num = r.vy ./ Vref, ana = r.Ana.Vya ./ Vref, xg = x.c, yg = y.v,
+         name = "v_y/V_{ref}", ename = "v_y", cmap = :berlin),
+        (num = r.P ./ Pref,  ana = r.Pana ./ Pref,    xg = x.c, yg = y.c,
+         name = "P/\\tau_{bg}", ename = "P", cmap = :vik),
     )
     common  =   (aspect_ratio = :equal, xlims = (M.xmin, M.xmax), ylims = (M.ymin, M.ymax),
-                 framestyle = :box, titlefontsize = 10, tickfontsize = 7)
+                 framestyle = :box, titlefontsize = 11, tickfontsize = 8)
     panels  =   Any[]
-    for rw in rows
+    for (k, rw) in enumerate(rows)
         lim     =   max(maximum(abs, rw.num), maximum(abs, rw.ana))
         errf    =   abs.(rw.num .- rw.ana) ./ maximum(abs, rw.ana) .* 100.0
+        xl      =   k == 3 ? "x [m]" : ""
         p1  =   heatmap(rw.xg, rw.yg, rw.num'; color = rw.cmap, clims = (-lim, lim),
-                        title = "\$$(rw.name)\$ (numerical)", common...)
+                        title = "\$$(rw.name)\$ (numerical)", xlabel = xl, ylabel = "y [m]", common...)
         p2  =   heatmap(rw.xg, rw.yg, rw.ana'; color = rw.cmap, clims = (-lim, lim),
-                        title = "\$$(rw.name)\$ (analytical)", common...)
+                        title = "\$$(rw.name)\$ (analytical)", xlabel = xl, common...)
         p3  =   heatmap(rw.xg, rw.yg, errf'; color = :thermal, clims = (0.0, maximum(errf)),
-                        title = "\$$(rw.name)\$ error [% of max]", common...)
+                        title = "\$$(rw.ename)\$ error [% of max]", xlabel = xl, common...)
         for p in (p1, p2, p3)
             plot!(p, xo, yo; color = :black, lw = 1, ls = :dash, label = "")
         end
         append!(panels, (p1, p2, p3))
     end
-    return plot(panels...; layout = (3, 3), size = (1200, 1050),
-                left_margin = 4Plots.mm, bottom_margin = 3Plots.mm)
+    return plot(panels...; layout = (3, 3), size = (1350, 1100),
+                left_margin = 6Plots.mm, right_margin = 4Plots.mm, bottom_margin = 3Plots.mm)
 end
 
 end # module

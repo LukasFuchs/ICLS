@@ -8,13 +8,15 @@ Instantaneous Stokes solutions for a circular or elliptical viscous inclusion in
 |---|---|
 | `InclusionTools.jl` | Module with the analytical solution for an elliptical inclusion (arbitrary aspect ratio, orientation, viscosity contrast, and combination of pure and simple shear), model setup and solution with GeoModBox, diagnostics, and plotting. |
 | `ViscousInclusion.jl` | Single model: fields of $\eta$, $\psi$, $\dot{\varepsilon}_{II}$, $\tau_{II}$, and comparison of $v_x$, $v_y$, $P$ with the analytical solution. |
-| `ViscousInclusion_Deta.jl` | Sweep over the viscosity contrast $\Delta\eta = \eta_c/\eta_m$ for several orientations $\theta$. Stores mean/max/min/std of $\dot{\varepsilon}_{II}$, $\tau_{II}$, $\psi$ in inclusion and matrix (CSV) and plots them together with the analytical inclusion values. |
-| `ViscousInclusion_Rot.jl` | Sweep over the orientation $\theta$ for a fixed viscosity contrast. |
+| `ViscousInclusion_Deta.jl` | Sweep over the viscosity contrast $\Delta\eta = \eta_c/\eta_m$ for several orientations $\theta$ and averaging schemes (`avgms`), including a figure comparing the schemes. Stores mean/max/min/std of $\dot{\varepsilon}_{II}$, $\tau_{II}$, $\psi$ in inclusion and matrix (CSV) and plots them together with the analytical inclusion values. |
+| `ViscousInclusion_Rot.jl` | Sweep over the orientation $\theta$ for a fixed viscosity contrast and several averaging schemes. |
+| `resolution_test.jl` | Grid convergence (e.g. 50²–400²) of the inclusion means and of the bulk velocity and pressure errors for a weak and a strong inclusion and all averaging schemes, including the observed convergence order. |
+| `compare_averaging.jl` | Sensitivity of errors and inclusion statistics to the viscosity averaging (`:arith`, `:harm`, `:geom`) and to the cells used for the statistics. |
 | `check_analytical.jl` | Tests of the analytical solution (reference values, circular limit vs. `Dani_Solution_vec!`, continuity across the interface, far field, rigid-inclusion limit). |
 
 ## Usage
 
-From the `ICLS/Julia` directory:
+From the `ICLS/ICLS_jl` directory:
 
 ```bash
 julia --project=. ViscousInclusion/check_analytical.jl     # run once to verify the analytical solution
@@ -38,18 +40,26 @@ For multithreaded marker interpolation add, e.g., `-t 4`. The model parameters a
   - General shear: `deformation = (ε̇ = ..., γ̇ = ...)`.
 - Orientation $\theta$ of the long axis in degrees, counter-clockwise from the $x$-axis.
 - Second invariants $\dot{\varepsilon}_{II} = \sqrt{\tfrac{1}{2}(\dot{\varepsilon}_{xx}^2 + \dot{\varepsilon}_{yy}^2) + \dot{\varepsilon}_{xy}^2}$ (same for $\tau_{II}$) on the centroids, with the shear components averaged from the vertices. "Dissipative energy" $\psi = \tau_{II}\,\dot{\varepsilon}_{II}$.
-- Inclusion statistics use all centroids inside the analytical ellipse. Normalization in the figures: $\dot{\varepsilon}_{bg}$, $\tau_{bg} = 2\eta_m\dot{\varepsilon}_{bg}$, $\psi_{bg} = \tau_{bg}\dot{\varepsilon}_{bg}$.
+- Inclusion and matrix statistics (`statmask`):
+  - `:pure` (default): only cells without markers of the other phase (inclusion marker fraction = 1 or 0). Cells cut by the interface carry an averaged viscosity, and their stress would otherwise dominate the mean of a weak inclusion. This is independent of `avgm`.
+  - `:geometric`: all centroids inside/outside the analytical ellipse.
+- τ_II (`τmethod`): `:centroid` (default) uses $\tau_{II} = 2\eta_c\dot{\varepsilon}_{II}$ with the centroid viscosity, as in FDCSGm; `:components` uses the solver's stress components (τ_xy from the vertex viscosity, averaged to the centroids).
+- Errors are given for the whole domain and for the "bulk", i.e. excluding a band of ±`band` cells (default 2) around the interface, where the pressure error of the sharp viscosity jump is concentrated. The bulk pressure error is further split into the matrix (`L2_P_mat`, relative L2) and the inclusion interior (`rms_P_inc`, in % of $\tau_{bg}$, since the analytical inclusion pressure can be zero); the pressure constant is fixed in the matrix bulk.
+- Viscosity averaging: the averaging scheme is fixed within a sweep. The sweep scripts loop over `avgms` to quantify the sensitivity to the scheme, not to switch schemes with the viscosity contrast.
+- Normalization in the figures: $\dot{\varepsilon}_{bg}$, $\tau_{bg} = 2\eta_m\dot{\varepsilon}_{bg}$, $\psi_{bg} = \tau_{bg}\dot{\varepsilon}_{bg}$.
 
 ## Analytical solution
 
 `EllipseSolution` implements eqs. (48)–(64) of Schmid & Podladchikov (2003) using the Joukowski transform $z = R(\zeta + 1/\zeta)$. Inside the inclusion strain rate, stress, and pressure are homogeneous (`inclusion_values`), which gives exact reference values for the inclusion means. A circle is treated as the limit $a/b \to 1$ and reproduces GeoModBox's `Dani_Solution_vec!`.
 
 ```julia
-include("InclusionTools.jl"); using .InclusionTools
-s = EllipseSolution(a = 300.0, b = 100.0, θ = 30.0, ηm = 1e23, ηc = 1e19, ε̇ = -1e-15, γ̇ = 0.0)
-vx, vy, P = evaluate(s, 250.0, 40.0)
-inclusion_values(s)        # (εII, τII, ψ, P) inside the inclusion
+include("InclusionTools.jl"); IT = InclusionTools
+s = IT.EllipseSolution(a = 300.0, b = 100.0, θ = 30.0, ηm = 1e23, ηc = 1e19, ε̇ = -1e-15, γ̇ = 0.0)
+vx, vy, P = IT.evaluate(s, 250.0, 40.0)
+IT.inclusion_values(s)     # (εII, τII, ψ, P) inside the inclusion
 ```
+
+The scripts call the module as `IT.<function>` rather than `using .InclusionTools`, so they can be re-run in the same REPL session (e.g. VS Code): each `include` creates a new version of the module, and `using` two versions makes the exported names ambiguous.
 
 Differences to FDCSGm: there, the boundary velocities for elliptical inclusions were taken from the circular solution with radius $a$; here they come from the elliptical solution.
 

@@ -7,17 +7,20 @@
 # ViscousInclusion.m (which supported the analytical comparison only for
 # circles).
 #
-# Run from the ICLS/Julia directory:
+# Run from the ICLS/ICLS_jl directory:
 #   julia --project=. ViscousInclusion/ViscousInclusion.jl
 # ======================================================================= #
 using Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 
+# (Re-)load the tools. Functions are called as IT.<name> instead of
+# `using .InclusionTools`, so the script can be re-run in the same REPL
+# session (e.g. VS Code) without name clashes between module versions.
 include(joinpath(@__DIR__, "InclusionTools.jl"))
-using .InclusionTools
 using Plots, Printf
 
-function main()
+function run_single()
+    IT = InclusionTools          # current version of the module
     # ===================== Model parameters ============================ #
     P   =   (
         L           =   1000.0,         # box width [m]
@@ -27,11 +30,13 @@ function main()
         b           =   200.0,          # minor semi-axis [m]  (a == b -> circle)
         θ           =   0.0,            # orientation [deg], counter-clockwise
         ηm          =   1e23,           # matrix viscosity [Pa s]
-        ηc          =   1e21,           # inclusion viscosity [Pa s]
+        ηc          =   1e25,           # inclusion viscosity [Pa s]
         ε̇bg         =   1e-15,          # background strain-rate invariant [1/s]
         deformation =   :PureShear,     # :PureShear, :SimpleShear, or (ε̇=..., γ̇=...)
         bc          =   :analytical,    # :analytical or :background
         avgm        =   :arith,         # viscosity averaging: :arith, :harm, :geom
+        statmask    =   :pure,          # statistics on :pure or :geometric cells
+        τmethod     =   :centroid,      # τ_II = 2ηε̇_II (:centroid) or from components
     )
     save_fig    =   true
     outdir      =   joinpath(@__DIR__, "output", "single")
@@ -39,7 +44,7 @@ function main()
 
     println("Viscous inclusion: a = $(P.a), b = $(P.b), θ = $(P.θ)°, ",
             "ηc/ηm = $(P.ηc/P.ηm), $(P.deformation), bc = $(P.bc)")
-    r   =   RunInclusionModel(; P...)
+    r   =   IT.RunInclusionModel(; P...)
 
     # Inclusion and matrix statistics --------------------------------- #
     println("\n   Inclusion / matrix statistics (normalized by background values):")
@@ -50,8 +55,8 @@ function main()
     end
 
     # Figures --------------------------------------------------------- #
-    pF  =   PlotFields(r)
-    pC  =   PlotComparison(r)
+    pF  =   IT.PlotFields(r)
+    pC  =   IT.PlotComparison(r)
     if save_fig
         mkpath(outdir)
         tag =   @sprintf("%s_a%g_b%g_th%g_eta%.1e", P.deformation isa Symbol ? P.deformation : "GeneralShear",
@@ -65,4 +70,4 @@ function main()
     return r
 end
 
-r = main();
+r = run_single();
