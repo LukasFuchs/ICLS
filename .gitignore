@@ -1,0 +1,9 @@
+# OS / editor
+.DS_Store
+.vscode/
+
+# Model output
+Julia/**/output/
+*.jld2
+*.gif
+*.mp4
