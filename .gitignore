@@ -3,7 +3,7 @@
 .vscode/
 
 # Model output
-Julia/**/output/
+ICLS_jl/**/output/
 *.jld2
 *.gif
 *.mp4

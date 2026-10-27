@@ -1,0 +1,58 @@
+# Viscous Inclusion
+
+Instantaneous Stokes solutions for a circular or elliptical viscous inclusion in a viscous matrix under pure or simple shear, solved with [GeoModBox.jl](https://github.com/GeoSci-FFM/GeoModBox.jl) and compared with the analytical solution of Schmid & Podladchikov (2003). The scripts are the Julia counterparts of the `ViscousInclusion*.m` scripts of [FDCSGm](https://github.com/LukasFuchs/FDCSGm).
+
+## Content
+
+| File | Purpose |
+|---|---|
+| `InclusionTools.jl` | Module with the analytical solution for an elliptical inclusion (arbitrary aspect ratio, orientation, viscosity contrast, and combination of pure and simple shear), model setup and solution with GeoModBox, diagnostics, and plotting. |
+| `ViscousInclusion.jl` | Single model: fields of $\eta$, $\psi$, $\dot{\varepsilon}_{II}$, $\tau_{II}$, and comparison of $v_x$, $v_y$, $P$ with the analytical solution. |
+| `ViscousInclusion_Deta.jl` | Sweep over the viscosity contrast $\Delta\eta = \eta_c/\eta_m$ for several orientations $\theta$. Stores mean/max/min/std of $\dot{\varepsilon}_{II}$, $\tau_{II}$, $\psi$ in inclusion and matrix (CSV) and plots them together with the analytical inclusion values. |
+| `ViscousInclusion_Rot.jl` | Sweep over the orientation $\theta$ for a fixed viscosity contrast. |
+| `check_analytical.jl` | Tests of the analytical solution (reference values, circular limit vs. `Dani_Solution_vec!`, continuity across the interface, far field, rigid-inclusion limit). |
+
+## Usage
+
+From the `ICLS/Julia` directory:
+
+```bash
+julia --project=. ViscousInclusion/check_analytical.jl     # run once to verify the analytical solution
+julia --project=. ViscousInclusion/ViscousInclusion.jl
+julia --project=. ViscousInclusion/ViscousInclusion_Deta.jl
+julia --project=. ViscousInclusion/ViscousInclusion_Rot.jl
+```
+
+For multithreaded marker interpolation add, e.g., `-t 4`. The model parameters are defined at the top of each script. Results are written to `ViscousInclusion/output/` (not tracked by git).
+
+## Setup and conventions
+
+- Box of size $L \times H$ centred at the origin, inclusion at the centre. Phases are defined with markers (`IniTracer2D(..., :Inclusion, ...; ellA, ellB, α)`), and the viscosity is interpolated to centroids and vertices (`avgm = :arith`, `:harm`, or `:geom`).
+- Velocity boundary conditions (Dirichlet on all sides):
+  - `bc = :analytical`: values from the analytical (infinite-domain) solution, also for elliptical inclusions. This removes finite-box effects and allows a direct error estimate.
+  - `bc = :background`: unperturbed far-field flow, i.e. the inclusion feels the box boundaries.
+- Background flow, centred at the inclusion: $v_x = \dot{\varepsilon}(x-x_c) + \dot{\gamma}(y-y_c)$, $v_y = -\dot{\varepsilon}(y-y_c)$.
+  - `:PureShear`: $\dot{\varepsilon} = -\dot{\varepsilon}_{bg}$ (horizontal shortening, as in GeoModBox and FDCSGm).
+  - `:SimpleShear`: $\dot{\gamma} = 2\dot{\varepsilon}_{bg}$ (top to the right).
+  - In both cases the second invariant of the background strain rate equals $\dot{\varepsilon}_{bg}$, so pure and simple shear results are directly comparable. Note that GeoModBox's `IniVelocity!(:SimpleShear, ...; ε)` uses $\dot{\gamma} = \varepsilon$ instead.
+  - General shear: `deformation = (ε̇ = ..., γ̇ = ...)`.
+- Orientation $\theta$ of the long axis in degrees, counter-clockwise from the $x$-axis.
+- Second invariants $\dot{\varepsilon}_{II} = \sqrt{\tfrac{1}{2}(\dot{\varepsilon}_{xx}^2 + \dot{\varepsilon}_{yy}^2) + \dot{\varepsilon}_{xy}^2}$ (same for $\tau_{II}$) on the centroids, with the shear components averaged from the vertices. "Dissipative energy" $\psi = \tau_{II}\,\dot{\varepsilon}_{II}$.
+- Inclusion statistics use all centroids inside the analytical ellipse. Normalization in the figures: $\dot{\varepsilon}_{bg}$, $\tau_{bg} = 2\eta_m\dot{\varepsilon}_{bg}$, $\psi_{bg} = \tau_{bg}\dot{\varepsilon}_{bg}$.
+
+## Analytical solution
+
+`EllipseSolution` implements eqs. (48)–(64) of Schmid & Podladchikov (2003) using the Joukowski transform $z = R(\zeta + 1/\zeta)$. Inside the inclusion strain rate, stress, and pressure are homogeneous (`inclusion_values`), which gives exact reference values for the inclusion means. A circle is treated as the limit $a/b \to 1$ and reproduces GeoModBox's `Dani_Solution_vec!`.
+
+```julia
+include("InclusionTools.jl"); using .InclusionTools
+s = EllipseSolution(a = 300.0, b = 100.0, θ = 30.0, ηm = 1e23, ηc = 1e19, ε̇ = -1e-15, γ̇ = 0.0)
+vx, vy, P = evaluate(s, 250.0, 40.0)
+inclusion_values(s)        # (εII, τII, ψ, P) inside the inclusion
+```
+
+Differences to FDCSGm: there, the boundary velocities for elliptical inclusions were taken from the circular solution with radius $a$; here they come from the elliptical solution.
+
+## References
+
+Schmid, D. W., & Podladchikov, Y. Y. (2003). Analytical solutions for deformable elliptical inclusions in general shear. *Geophysical Journal International*, 155(1), 269–288. https://doi.org/10.1046/j.1365-246X.2003.02041.x
