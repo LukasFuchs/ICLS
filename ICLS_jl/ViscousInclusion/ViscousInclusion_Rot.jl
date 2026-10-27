@@ -26,7 +26,7 @@ function run_rot()
     P   =   (
         L           =   1000.0,
         H           =   1000.0,
-        nc          =   (x = 100, y = 100),
+        nc          =   (x = 400, y = 400),
         a           =   200.0,
         b           =   100.0,
         ηm          =   1e23,
@@ -37,14 +37,13 @@ function run_rot()
         statmask    =   :pure,          # statistics on :pure or :geometric cells
         τmethod     =   :centroid,      # τ_II = 2ηε̇_II (:centroid) or from components
     )
-    avgms       =   [:arith, :harm, :geom]                  # averaging schemes to compare
-    angles      =   collect(0.0:2.0:180.0)                  # θ [deg]
+    avgms       =   [:geom] #[:arith, :harm, :geom]                  # averaging schemes to compare
+    angles      =   collect(0.0:1.0:45.0)                  # θ [deg]
     outdir      =   joinpath(@__DIR__, "output", "Rot")
     # =================================================================== #
     mkpath(outdir)
     keys_   =   (:εII, :τII, :ψ)
-    errkeys =   (:L2_vx, :L2_vy, :L2_P, :L2_vx_bulk, :L2_vy_bulk, :L2_P_bulk,
-                 :L2_P_mat, :rms_P_inc)
+    errkeys =   (:L2_v, :L2_v_bulk, :rms_P, :rms_P_bulk, :rms_P_mat, :rms_P_inc)
     header  =   ["theta";
                  ["$(k)_inc_mean" for k in keys_];
                  ["$(k)_inc_analytical" for k in keys_];
@@ -77,7 +76,7 @@ function run_rot()
     panels  =   Any[]
     for (j, k) in enumerate(keys_)
         p   =   plot(framestyle = :box, xlabel = "\$\\theta\$ [°]", ylabel = labels[k],
-                     xlims = (0, 180), xticks = 0:30:180, legend = j == 1 ? :best : false)
+                     xlims = extrema(angles), xticks = 0:(maximum(angles) - minimum(angles) > 90 ? 30 : 5):180, legend = j == 1 ? :best : false)
         for (m, avgm) in enumerate(avgms)
             d   =   results[avgm]
             plot!(p, d[:, 1], d[:, 1 + j] ./ ref[k]; lw = 2, color = colors[m],

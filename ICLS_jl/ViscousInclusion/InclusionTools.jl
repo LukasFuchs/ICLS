@@ -332,8 +332,30 @@ fieldstats(A, mask) = (
     min  = minimum(A[mask]), std = std(A[mask]),
 )
 
-relL2(num, ana)   = norm(num .- ana) / norm(ana) * 100.0
-relLinf(num, ana) = maximum(abs.(num .- ana)) / maximum(abs, ana) * 100.0
+"""
+    velerr(vx, vy, vxa, vya) -> (L2, Linf)
+
+Velocity error of both components combined, relative to the analytical
+velocity: L2 = ‖Δv‖/‖v_ana‖, L∞ = max|Δv_i| / max|v_ana,i| (in %). Unlike
+per-component errors this stays well defined if one analytical component
+vanishes (e.g. v_y for simple shear at Δη = 1).
+"""
+function velerr(vx, vy, vxa, vya)
+    L2      =   sqrt(sum(abs2, vx .- vxa) + sum(abs2, vy .- vya)) /
+                sqrt(sum(abs2, vxa) + sum(abs2, vya)) * 100.0
+    Linf    =   max(maximum(abs.(vx .- vxa)), maximum(abs.(vy .- vya))) /
+                max(maximum(abs, vxa), maximum(abs, vya)) * 100.0
+    return L2, Linf
+end
+
+"""
+    perr(ΔP, τbg) -> (rms, max)
+
+Pressure error in % of the background stress τ_bg = 2 η_m ε̇_bg (well defined
+even where the analytical pressure vanishes).
+"""
+perr(ΔP, τbg) = isempty(ΔP) ? (NaN, NaN) :
+    (sqrt(mean(abs2, ΔP)) / τbg * 100.0, maximum(abs, ΔP) / τbg * 100.0)
 
 # ======================================================================= #
 # 4. Model run
@@ -474,41 +496,41 @@ function RunInclusionModel(;
     Residuals2D!(D, VBC, ε, τ, divV, Δ, D.ηc, D.ηv, g, Fm, FPt)
 
     # Post-processing --------------------------------------------------- #
-    Pnum    =   D.Pt .- mean(D.Pt)                 # pressure up to a constant
-    Pana    =   Ana.Pa .- mean(Ana.Pa)
     vx_num  =   D.vx[:, 2:end-1]
     vy_num  =   D.vy[2:end-1, :]
+    τbg     =   2ηm * ε̇bg
 
-    # bulk errors: exclude a band of ±band cells around the interface
+    # masks: bulk = farther than ±band cells from the interface
     w       =   band * max(Δ.x, Δ.y)
     bvx     =   bulkmask(sol, x.v, y.c, w)
     bvy     =   bulkmask(sol, x.c, y.v, w)
     bP      =   bulkmask(sol, x.c, y.c, w)
-    Pnum_b  =   D.Pt[bP] .- mean(D.Pt[bP])
-    Pana_b  =   Ana.Pa[bP] .- mean(Ana.Pa[bP])
-    # split of the bulk pressure error into matrix and inclusion interior.
-    # The pressure constant is fixed in the matrix bulk, where the solution is
-    # most accurate; the inclusion error is given in % of τ_bg = 2 η_m ε̇_bg
-    # (the analytical inclusion pressure may be zero, e.g. circle in pure shear).
-    τbg     =   2ηm * ε̇bg
     geoP    =   [isinside(sol, x.c[i], y.c[j]) for i = 1:NC.x, j = 1:NC.y]
-    bPm     =   bP .& .!geoP
-    bPi     =   bP .&   geoP
+    bPm     =   bP .& .!geoP                    # matrix bulk
+    bPi     =   bP .&   geoP                    # inclusion interior
+
+    # The pressure is defined up to a constant. It is fixed in the matrix bulk,
+    # where the solution is most accurate, and used for all pressure errors
+    # and plots. All pressure errors are given in % of τ_bg.
     cP      =   mean(D.Pt[bPm] .- Ana.Pa[bPm])
-    ΔPm     =   D.Pt[bPm] .- cP .- Ana.Pa[bPm]
-    ΔPi     =   any(bPi) ? D.Pt[bPi] .- cP .- Ana.Pa[bPi] : [NaN]
+    Pnum    =   D.Pt .- cP
+    Pana    =   copy(Ana.Pa)
+    ΔP      =   Pnum .- Pana
+
+    L2v,  Lifv  =   velerr(vx_num, vy_num, Ana.Vxa, Ana.Vya)
+    L2vb, Lifvb =   velerr(vx_num[bvx], vy_num[bvy], Ana.Vxa[bvx], Ana.Vya[bvy])
+    rmsP,  maxP     =   perr(vec(ΔP), τbg)
+    rmsPb, maxPb    =   perr(ΔP[bP],  τbg)
+    rmsPm, maxPm    =   perr(ΔP[bPm], τbg)
+    rmsPi, maxPi    =   perr(ΔP[bPi], τbg)
 
     err     =   (
-        L2_vx   =   relL2(vx_num, Ana.Vxa),   Linf_vx =   relLinf(vx_num, Ana.Vxa),
-        L2_vy   =   relL2(vy_num, Ana.Vya),   Linf_vy =   relLinf(vy_num, Ana.Vya),
-        L2_P    =   relL2(Pnum, Pana),        Linf_P  =   relLinf(Pnum, Pana),
-        L2_vx_bulk  = relL2(vx_num[bvx], Ana.Vxa[bvx]),  Linf_vx_bulk = relLinf(vx_num[bvx], Ana.Vxa[bvx]),
-        L2_vy_bulk  = relL2(vy_num[bvy], Ana.Vya[bvy]),  Linf_vy_bulk = relLinf(vy_num[bvy], Ana.Vya[bvy]),
-        L2_P_bulk   = relL2(Pnum_b, Pana_b),             Linf_P_bulk  = relLinf(Pnum_b, Pana_b),
-        L2_P_mat    = norm(ΔPm) / norm(Ana.Pa[bPm]) * 100.0,
-        Linf_P_mat  = maximum(abs, ΔPm) / maximum(abs, Ana.Pa[bPm]) * 100.0,
-        rms_P_inc   = sqrt(mean(ΔPi .^ 2)) / τbg * 100.0,       # [% of τ_bg]
-        max_P_inc   = maximum(abs, ΔPi) / τbg * 100.0,          # [% of τ_bg]
+        L2_v        = L2v,   Linf_v      = Lifv,      # [% of analytical velocity]
+        L2_v_bulk   = L2vb,  Linf_v_bulk = Lifvb,
+        rms_P       = rmsP,  max_P       = maxP,      # [% of τ_bg]
+        rms_P_bulk  = rmsPb, max_P_bulk  = maxPb,
+        rms_P_mat   = rmsPm, max_P_mat   = maxPm,
+        rms_P_inc   = rmsPi, max_P_inc   = maxPi,
     )
 
     εII, τII, ψ =   Invariants(ε, τ, D.ηc; τmethod = τmethod)
@@ -536,16 +558,12 @@ function RunInclusionModel(;
     ref     =   (εII = ε̇bg, τII = τbg, ψ = τbg * ε̇bg)
 
     if verbose
-        @printf("   Relative L2 error  vx: %8.4f %%,  vy: %8.4f %%,  P: %8.4f %%\n",
-                err.L2_vx, err.L2_vy, err.L2_P)
-        @printf("   Relative L∞ error  vx: %8.4f %%,  vy: %8.4f %%,  P: %8.4f %%\n",
-                err.Linf_vx, err.Linf_vy, err.Linf_P)
-        @printf("   Bulk (±%d cells excluded) L2 error  vx: %8.4f %%,  vy: %8.4f %%,  P: %8.4f %%\n",
-                band, err.L2_vx_bulk, err.L2_vy_bulk, err.L2_P_bulk)
-        @printf("   Bulk (±%d cells excluded) L∞ error  vx: %8.4f %%,  vy: %8.4f %%,  P: %8.4f %%\n",
-                band, err.Linf_vx_bulk, err.Linf_vy_bulk, err.Linf_P_bulk)
-        @printf("   Bulk pressure error  matrix: L2 %8.4f %%, L∞ %8.4f %% | inclusion: rms %8.4f %%, max %8.4f %% of τ_bg\n",
-                err.L2_P_mat, err.Linf_P_mat, err.rms_P_inc, err.max_P_inc)
+        @printf("   Velocity error [%% of v_ana]   all: L2 %8.4f, L∞ %8.4f | bulk (±%d cells): L2 %8.4f, L∞ %8.4f\n",
+                err.L2_v, err.Linf_v, band, err.L2_v_bulk, err.Linf_v_bulk)
+        @printf("   Pressure error [%% of τ_bg]    all: rms %8.4f, max %8.4f | bulk: rms %8.4f, max %8.4f\n",
+                err.rms_P, err.max_P, err.rms_P_bulk, err.max_P_bulk)
+        @printf("                                 matrix bulk: rms %8.4f, max %8.4f | inclusion: rms %8.4f, max %8.4f\n",
+                err.rms_P_mat, err.max_P_mat, err.rms_P_inc, err.max_P_inc)
         @printf("   Statistics: %s mask (%d inclusion cells, %d of %d inside the ellipse), τ_II: %s\n",
                 statmask, count(incmask), count(geomask .& incmask), count(geomask), τmethod)
         @printf("   Inclusion ⟨ε̇II⟩/ε̇bg = %.4e (analytical %.4e)\n",
@@ -651,27 +669,30 @@ function PlotComparison(r)
     xo, yo  =   ellipse_outline(r.sol)
     Vref    =   r.ref.εII * (M.xmax - M.xmin)
     Pref    =   r.ref.τII
+    # error normalization (consistent with r.err): velocities in % of the
+    # maximum analytical velocity (both components), pressure in % of τ_bg
+    vmax    =   max(maximum(abs, r.Ana.Vxa), maximum(abs, r.Ana.Vya)) / Vref
     rows    =   (
-        (num = r.vx ./ Vref, ana = r.Ana.Vxa ./ Vref, xg = x.v, yg = y.c,
-         name = "v_x/V_{ref}", ename = "v_x", cmap = :berlin),
-        (num = r.vy ./ Vref, ana = r.Ana.Vya ./ Vref, xg = x.c, yg = y.v,
-         name = "v_y/V_{ref}", ename = "v_y", cmap = :berlin),
-        (num = r.P ./ Pref,  ana = r.Pana ./ Pref,    xg = x.c, yg = y.c,
-         name = "P/\\tau_{bg}", ename = "P", cmap = :vik),
+        (num = r.vx ./ Vref, ana = r.Ana.Vxa ./ Vref, xg = x.v, yg = y.c, enorm = vmax,
+         name = "v_x/V_{ref}", ename = "v_x", eunit = "% of max |v|", cmap = :berlin),
+        (num = r.vy ./ Vref, ana = r.Ana.Vya ./ Vref, xg = x.c, yg = y.v, enorm = vmax,
+         name = "v_y/V_{ref}", ename = "v_y", eunit = "% of max |v|", cmap = :berlin),
+        (num = r.P ./ Pref,  ana = r.Pana ./ Pref,    xg = x.c, yg = y.c, enorm = 1.0,
+         name = "P/\\tau_{bg}", ename = "P", eunit = "% of \$\\tau_{bg}\$", cmap = :vik),
     )
     common  =   (aspect_ratio = :equal, xlims = (M.xmin, M.xmax), ylims = (M.ymin, M.ymax),
                  framestyle = :box, titlefontsize = 11, tickfontsize = 8)
     panels  =   Any[]
     for (k, rw) in enumerate(rows)
-        lim     =   max(maximum(abs, rw.num), maximum(abs, rw.ana))
-        errf    =   abs.(rw.num .- rw.ana) ./ maximum(abs, rw.ana) .* 100.0
+        lim     =   max(maximum(abs, rw.num), maximum(abs, rw.ana), eps())
+        errf    =   abs.(rw.num .- rw.ana) ./ rw.enorm .* 100.0
         xl      =   k == 3 ? "x [m]" : ""
         p1  =   heatmap(rw.xg, rw.yg, rw.num'; color = rw.cmap, clims = (-lim, lim),
                         title = "\$$(rw.name)\$ (numerical)", xlabel = xl, ylabel = "y [m]", common...)
         p2  =   heatmap(rw.xg, rw.yg, rw.ana'; color = rw.cmap, clims = (-lim, lim),
                         title = "\$$(rw.name)\$ (analytical)", xlabel = xl, common...)
-        p3  =   heatmap(rw.xg, rw.yg, errf'; color = :thermal, clims = (0.0, maximum(errf)),
-                        title = "\$$(rw.ename)\$ error [% of max]", xlabel = xl, common...)
+        p3  =   heatmap(rw.xg, rw.yg, errf'; color = :thermal, clims = (0.0, max(maximum(errf), eps())),
+                        title = "\$$(rw.ename)\$ error [$(rw.eunit)]", xlabel = xl, common...)
         for p in (p1, p2, p3)
             plot!(p, xo, yo; color = :black, lw = 1, ls = :dash, label = "")
         end

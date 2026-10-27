@@ -27,17 +27,17 @@ function run_deta()
     P   =   (
         L           =   1000.0,
         H           =   1000.0,
-        nc          =   (x = 100, y = 100),
+        nc          =   (x = 200, y = 200),
         a           =   300.0,
         b           =   100.0,
         ηm          =   1e23,
         ε̇bg         =   1e-15,
-        deformation =   :PureShear,     # :PureShear or :SimpleShear
+        deformation =   :SimpleShear,     # :PureShear or :SimpleShear
         bc          =   :analytical,
         statmask    =   :pure,          # statistics on :pure or :geometric cells
         τmethod     =   :centroid,      # τ_II = 2ηε̇_II (:centroid) or from components
     )
-    avgms       =   [:arith, :harm, :geom]                  # averaging schemes to compare
+    avgms       =   [:geom] # [:arith, :harm, :geom]                  # averaging schemes to compare
     angles      =   [0.0, 22.5, 45.0, 90.0]                 # θ [deg]
     Δη          =   10.0 .^ range(-5, 5, length = 41)       # ηc/ηm
     outdir      =   joinpath(@__DIR__, "output", "Deta",
@@ -45,8 +45,7 @@ function run_deta()
     # =================================================================== #
     mkpath(outdir)
     keys_   =   (:εII, :τII, :ψ)
-    errkeys =   (:L2_vx, :L2_vy, :L2_P, :L2_vx_bulk, :L2_vy_bulk, :L2_P_bulk,
-                 :L2_P_mat, :rms_P_inc)
+    errkeys =   (:L2_v, :L2_v_bulk, :rms_P, :rms_P_bulk, :rms_P_mat, :rms_P_inc)
     header  =   ["eta_ratio";
                  ["$(k)_inc_$(s)" for k in keys_ for s in ("mean", "max", "min", "std")];
                  ["$(k)_mat_$(s)" for k in keys_ for s in ("mean", "max", "min", "std")];
@@ -112,13 +111,26 @@ function run_deta()
                      plot_title = "$(ttl), avgm = $(avgm)", plot_titlefontsize = 11)
         savefig(pA, joinpath(outdir, "eps_tau_psi_Deta_$(P.deformation)_$(avgm).png"))
 
-        pT  =   plot(xscale = :log10, yscale = :log10, framestyle = :box, aspect_ratio = :equal,
+        # common decades for both axes (aspect_ratio = :equal breaks the log ticks in GR)
+        allv    =   vcat([vcat(results[(avgm, θ)][:, col(:εII, :mean)] ./ ref.εII,
+                               results[(avgm, θ)][:, col(:τII, :mean)] ./ ref.τII) for θ in angles]...)
+        lo, hi  =   floor(log10(minimum(allv))), ceil(log10(maximum(allv)))
+        tks     =   10.0 .^ (lo:hi)
+        pT  =   plot(xscale = :log10, yscale = :log10, framestyle = :box,
+                     xlims = (10^lo, 10^hi), ylims = (10^lo, 10^hi), xticks = tks, yticks = tks,
                      xlabel = labels[:εII], ylabel = labels[:τII], legend = :bottomleft,
-                     title = "$(ttl), avgm = $(avgm)", titlefontsize = 10, size = (650, 600))
+                     title = "$(ttl), avgm = $(avgm)", titlefontsize = 10, size = (650, 620))
+        # isolines of the dissipative energy ψ/ψ_bg = (τ/τ_bg)(ε̇/ε̇_bg) = 10^k
+        for k in (lo - hi + 1):(hi - lo - 1)
+            xx  =   10.0 .^ range(lo, hi, length = 50)
+            plot!(pT, xx, 10.0^k ./ xx; color = :gray80, lw = 0.6, label = k == 0 ? "ψ/ψ_bg = 10^k" : "")
+        end
         for (j, θ) in enumerate(angles)
             d   =   results[(avgm, θ)]
             plot!(pT, d[:, col(:εII, :mean)] ./ ref.εII, d[:, col(:τII, :mean)] ./ ref.τII;
                   color = colors[j], lw = 2, label = "θ = $(θ)°")
+            plot!(pT, d[:, cola(:εII)] ./ ref.εII, d[:, cola(:τII)] ./ ref.τII;
+                  color = :black, lw = 1, ls = :dash, label = j == 1 ? "analytical" : "")
         end
         savefig(pT, joinpath(outdir, "tau_vs_eps_Deta_$(P.deformation)_$(avgm).png"))
     end
@@ -150,7 +162,7 @@ function run_deta()
                  ylabel = "error [%]", legend = :outertopright, size = (800, 450),
                  title = "$(ttl), θ = $(θ0)°", titlefontsize = 10)
     ecol(name) = findfirst(==(name), header)
-    for (j, (name, lab)) in enumerate((("L2_vx_bulk", "L2 vx bulk"), ("L2_P_mat", "L2 P matrix"),
+    for (j, (name, lab)) in enumerate((("L2_v_bulk", "L2 v bulk [% v]"), ("rms_P_mat", "rms P matrix [% τbg]"),
                                        ("rms_P_inc", "rms P incl. [% τbg]")))
         for avgm in avgms
             d   =   results[(avgm, θ0)]

@@ -21,9 +21,9 @@ function run_restest()
     P   =   (
         L           =   1000.0,
         H           =   1000.0,
-        a           =   300.0,          # a == b -> circle; e.g. a = 300, b = 100 for an ellipse
-        b           =   100.0,
-        θ           =   45.0,
+        a           =   200.0,          # a == b -> circle; e.g. a = 300, b = 100 for an ellipse
+        b           =   200.0,
+        θ           =   0.0,
         ηm          =   1e23,
         ε̇bg         =   1e-15,
         deformation =   :PureShear,
@@ -39,11 +39,11 @@ function run_restest()
     mkpath(outdir)
     quantities  =   (
         (key = :dev_εII,    label = "|dev.| \$\\langle\\dot{\\varepsilon}_{II}\\rangle\$ [%]"),
-        (key = :L2_v_bulk,  label = "L2 v bulk [%]"),
-        (key = :L2_P_mat,   label = "L2 P matrix [%]"),
+        (key = :L2_v_bulk,  label = "L2 v bulk [% of v]"),
+        (key = :rms_P_mat,  label = "rms P matrix [% of \$\\tau_{bg}\$]"),
         (key = :rms_P_inc,  label = "rms P inclusion [% of \$\\tau_{bg}\$]"),
     )
-    header  =   ["nx", "dx", "dev_epsII", "dev_tauII", "dev_psi", "L2_vx_bulk", "L2_P_mat", "rms_P_inc"]
+    header  =   ["nx", "dx", "dev_epsII", "dev_tauII", "dev_psi", "L2_v_bulk", "rms_P_mat", "rms_P_inc"]
     res     =   Dict{Tuple{Float64, Symbol}, Matrix{Float64}}()
 
     for ηr in ηratios, avgm in avgms
@@ -55,7 +55,7 @@ function run_restest()
                                          avgm = avgm, verbose = false)
             dev(k)  =   (r.stats.inc[k].mean / r.ana_inc[k] - 1) * 100
             data[i, :] .= [n, P.L / n, dev(:εII), dev(:τII), dev(:ψ),
-                           r.err.L2_vx_bulk, r.err.L2_P_mat, r.err.rms_P_inc]
+                           r.err.L2_v_bulk, r.err.rms_P_mat, r.err.rms_P_inc]
             @printf("%.1f s\n", time() - t0)
         end
         res[(ηr, avgm)] = data
@@ -66,7 +66,7 @@ function run_restest()
     order(e1, e2, h1, h2) = log(abs(e1) / abs(e2)) / log(h1 / h2)
     for ηr in ηratios
         @printf("\nηc/ηm = %.0e\n", ηr)
-        @printf("%-6s %6s | %10s %10s %10s %10s\n", "avgm", "nx", "dev ε̇II", "L2 v bulk", "L2 P mat", "rms P inc")
+        @printf("%-6s %6s | %10s %10s %10s %10s\n", "avgm", "nx", "dev ε̇II", "L2 v bulk", "rms P mat", "rms P inc")
         for avgm in avgms
             d   =   res[(ηr, avgm)]
             for i in axes(d, 1)
@@ -84,7 +84,7 @@ function run_restest()
     # Figure: errors vs grid spacing --------------------------------------- #
     colors  =   palette(:tab10)
     styles  =   Dict(:arith => :solid, :harm => :dash, :geom => :dot)
-    cols    =   Dict(:dev_εII => 3, :L2_v_bulk => 6, :L2_P_mat => 7, :rms_P_inc => 8)
+    cols    =   Dict(:dev_εII => 3, :L2_v_bulk => 6, :rms_P_mat => 7, :rms_P_inc => 8)
     panels  =   Any[]
     for ηr in ηratios, q in quantities
         p   =   plot(xscale = :log10, yscale = :log10, framestyle = :box, xflip = true,

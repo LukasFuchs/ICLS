@@ -21,14 +21,14 @@ function run_compare()
     for ηr in (1e-2, 1e2)
         @printf("\nηc/ηm = %.0e  (deviation of the inclusion means from the analytical values in %%)\n", ηr)
         @printf("%-7s %-10s | %9s %9s %9s | %8s %8s %10s %10s\n", "avgm", "statmask",
-                "ε̇_II", "τ_II", "ψ", "L2 v", "L2 P", "L2 v bulk", "L2 P bulk")
+                "ε̇_II", "τ_II", "ψ", "L2 v", "rms P", "L2 v bulk", "rms P bulk")
         for avgm in (:arith, :harm, :geom), statmask in (:pure, :geometric)
             r   =   IT.RunInclusionModel(; P..., ηc = ηr * P.ηm, avgm = avgm,
                                          statmask = statmask, verbose = false)
             dev(k)  =   (r.stats.inc[k].mean / r.ana_inc[k] - 1) * 100
             @printf("%-7s %-10s | %+8.2f%% %+8.2f%% %+8.2f%% | %7.3f%% %7.3f%% %9.3f%% %9.3f%%\n",
                     avgm, statmask, dev(:εII), dev(:τII), dev(:ψ),
-                    r.err.L2_vx, r.err.L2_P, r.err.L2_vx_bulk, r.err.L2_P_bulk)
+                    r.err.L2_v, r.err.rms_P, r.err.L2_v_bulk, r.err.rms_P_bulk)
         end
     end
 end

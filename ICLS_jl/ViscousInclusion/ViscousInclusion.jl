@@ -30,7 +30,7 @@ function run_single()
         b           =   200.0,          # minor semi-axis [m]  (a == b -> circle)
         θ           =   0.0,            # orientation [deg], counter-clockwise
         ηm          =   1e23,           # matrix viscosity [Pa s]
-        ηc          =   1e25,           # inclusion viscosity [Pa s]
+        ηc          =   1e21,           # inclusion viscosity [Pa s]
         ε̇bg         =   1e-15,          # background strain-rate invariant [1/s]
         deformation =   :PureShear,     # :PureShear, :SimpleShear, or (ε̇=..., γ̇=...)
         bc          =   :analytical,    # :analytical or :background
