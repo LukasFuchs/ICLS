@@ -28,6 +28,9 @@
 #                                 aspect ratio a/b, one column per contrast Δη
 #                                 (C is constant per column and given in the title;
 #                                 A_τ = Δη A_ε and A_ψ = Δη A_ε² have the same pattern)
+#   7. AmpBand.png              : A_ε vs Δη for all a/b in one panel; the band
+#                                 between β = 0° and 45° contains every orientation,
+#                                 since A_ε(β)² = A_ε(0)² cos²2β + A_ε(45°)² sin²2β
 #   + CSV files with the maps (= amplification factors) and the summary curves.
 #
 # Notes
@@ -258,6 +261,44 @@ function run_maps()
                  plot_title = "Top: amplification A_ε = C ⋅ S (bold: A = 1).  Bottom: shape factor S (bold: S = 1, neutral).  β: angle to shortening direction",
                  plot_titlefontsize = 10)
     savefig(p6, joinpath(outdir, "AmpShape_ab_beta.png"))
+
+    # ------------------------------------------------------------------- #
+    # Figure 7: A_ε over Δη for all a/b and orientations in one panel.
+    # A_ε(β)² = A_ε(0°)² cos²(2β) + A_ε(45°)² sin²(2β), so for given Δη and a/b
+    # every orientation lies between the β = 0° and β = 45° curves (band).
+    # Panel (b): where a given β falls inside the band, S = A_ε/C vs β.
+    # ------------------------------------------------------------------- #
+    μb      =   10.0 .^ collect(-5.0:0.02:5.0)
+    bcol    =   palette(:tab10)
+    pa7 =   plot(; xscale = :log10, yscale = :log10, framestyle = :box, xlabel = "\$\\Delta\\eta = \\eta_c/\\eta_m\$",
+                 ylabel = "\$A_{\\dot\\varepsilon} = \\dot{\\varepsilon}_{II}/\\dot{\\varepsilon}_{bg}\$",
+                 title = "(a) band between β = 0° (dashed) and 45° (solid) = all orientations",
+                 legend = :bottomleft, legendfontsize = 7, titlefontsize = 10, guidefontsize = 10, tickfontsize = 8)
+    hline!(pa7, [1.0]; color = :gray, lw = 0.6, label = "")
+    for (m, t) in enumerate(ratios)
+        a0  =   [IT.amplification(μ, t, 0.0).ε  for μ in μb]
+        a45 =   [IT.amplification(μ, t, 45.0).ε for μ in μb]
+        plot!(pa7, μb, min.(a0, a45); fillrange = max.(a0, a45), fillalpha = 0.18, lw = 0,
+              color = bcol[m + 1], label = "")
+        plot!(pa7, μb, a45; color = bcol[m + 1], lw = 1.8, label = "a/b = $(t)")
+        plot!(pa7, μb, a0;  color = bcol[m + 1], lw = 1.8, ls = :dash, label = "")
+    end
+    plot!(pa7, μb, IT.contrast_factor.(μb); color = :black, lw = 2, label = "circle")
+    βb  =   collect(0.0:0.25:90.0)
+    pb7 =   plot(; framestyle = :box, xlims = (0, 90), xticks = 0:15:90, xlabel = "β [°]",
+                 ylabel = "\$S = A_{\\dot\\varepsilon}/C\$", legend = :top, legendfontsize = 7,
+                 title = "(b) position inside the band: S vs β (solid: weak, dotted: rigid limit)",
+                 titlefontsize = 10, guidefontsize = 10, tickfontsize = 8)
+    hline!(pb7, [1.0]; color = :black, lw = 1, label = "")
+    for (m, t) in enumerate(ratios)
+        plot!(pb7, βb, [IT.shapefactor(1e-12, t, β) for β in βb]; color = bcol[m + 1], lw = 1.8, label = "a/b = $(t)")
+        plot!(pb7, βb, [IT.shapefactor(1e12, t, β) for β in βb]; color = bcol[m + 1], lw = 1.8, ls = :dot, label = "")
+    end
+    p7  =   plot(pa7, pb7; layout = grid(1, 2, widths = [0.57, 0.43]), size = (1400, 540),
+                 left_margin = 7Plots.mm, bottom_margin = 7Plots.mm, top_margin = 2Plots.mm,
+                 plot_title = "Strain-rate amplification of an isolated elliptical inclusion (β: angle between long axis and shortening direction)",
+                 plot_titlefontsize = 11)
+    savefig(p7, joinpath(outdir, "AmpBand.png"))
 
     # ------------------------------------------------------------------- #
     # Figure 3: summary curves vs θ
