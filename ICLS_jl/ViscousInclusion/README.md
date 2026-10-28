@@ -2,6 +2,15 @@
 
 Instantaneous Stokes solutions for a circular or elliptical viscous inclusion in a viscous matrix under pure or simple shear, solved with [GeoModBox.jl](https://github.com/GeoSci-FFM/GeoModBox.jl) and compared with the analytical solution of Schmid & Podladchikov (2003). The scripts are the Julia counterparts of the `ViscousInclusion*.m` scripts of [FDCSGm](https://github.com/LukasFuchs/FDCSGm).
 
+## Authorship and provenance
+
+The Julia scripts in this directory (`InclusionTools.jl`, `ViscousInclusion.jl`, `ViscousInclusion_Deta.jl`, `ViscousInclusion_Rot.jl`, `resolution_test.jl`, `compare_averaging.jl`, `check_analytical.jl`, `ParameterMaps.jl`) and this README were written by Claude (Anthropic, model Claude Opus 5.5) in October 2026, at the request and under the direction of Lukas Fuchs (Goethe University Frankfurt), who also ran all models and reviewed the intermediate results.
+
+- The analytical solution for the elliptical inclusion was implemented from Schmid & Podladchikov (2003), eqs. 48–64. Before the Julia port it was verified against an independent Python implementation (not part of this repository); the reference values in `check_analytical.jl` come from that implementation.
+- The model setup and the solver loop in `RunInclusionModel` follow the viscous inclusion example of GeoModBox.jl (`examples/StokesEquation/2D/ViscousInclusion.jl`) closely and use its functions; GeoModBox itself is not modified.
+- The structure of the experiments (single model, Δη sweep, rotation sweep, inclusion statistics) follows the FDCSGm MATLAB scripts. No MATLAB code was translated line by line.
+- Claude could not run Julia in its own environment; all Julia results were produced on the user's machine and checked against the analytical solution.
+
 ## Content
 
 | File | Purpose |
@@ -10,10 +19,10 @@ Instantaneous Stokes solutions for a circular or elliptical viscous inclusion in
 | `ViscousInclusion.jl` | Single model: fields of $\eta$, $\psi$, $\dot{\varepsilon}_{II}$, $\tau_{II}$, and comparison of $v_x$, $v_y$, $P$ with the analytical solution. |
 | `ViscousInclusion_Deta.jl` | Sweep over the viscosity contrast $\Delta\eta = \eta_c/\eta_m$ for several orientations $\theta$ and averaging schemes (`avgms`), including a figure comparing the schemes. Stores mean/max/min/std of $\dot{\varepsilon}_{II}$, $\tau_{II}$, $\psi$ in inclusion and matrix (CSV) and plots them together with the analytical inclusion values. |
 | `ViscousInclusion_Rot.jl` | Sweep over the orientation $\theta$ for a fixed viscosity contrast and several averaging schemes. |
-| `ParameterMaps.jl` | Analytical maps of the inclusion values ε̇_II, τ_II, ψ over orientation θ and viscosity contrast Δη for several aspect ratios, the shape factor relative to a circular inclusion, and summary curves (weak and rigid limits, maximum dissipation). No numerical model is solved. |
+| `ParameterMaps.jl` | Analytical maps of the inclusion values ε̇_II, τ_II, ψ over orientation θ and viscosity contrast Δη for several aspect ratios, the shape factor relative to a circular inclusion, the amplification factors A = value/background (e.g. ε̇_II/ε̇_bg) with labeled contours, and summary curves (weak and rigid limits, maximum dissipation), the decomposition amplification = contrast part × shape part (closed form), and maps of A_ε and S over orientation β and aspect ratio a/b for fixed contrasts. No numerical model is solved. |
 | `resolution_test.jl` | Grid convergence (e.g. 50²–400²) of the inclusion means and of the bulk velocity and pressure errors for a weak and a strong inclusion and all averaging schemes, including the observed convergence order. |
 | `compare_averaging.jl` | Sensitivity of errors and inclusion statistics to the viscosity averaging (`:arith`, `:harm`, `:geom`) and to the cells used for the statistics. |
-| `check_analytical.jl` | Tests of the analytical solution (reference values, circular limit vs. `Dani_Solution_vec!`, continuity across the interface, far field, rigid-inclusion limit). |
+| `check_analytical.jl` | Tests of the analytical solution (reference values, circular limit vs. `Dani_Solution_vec!`, continuity across the interface, far field, rigid-inclusion limit) and of the closed-form amplification factors. |
 
 ## Usage
 
@@ -65,6 +74,24 @@ IT.inclusion_values(s)     # (εII, τII, ψ, P) inside the inclusion
 The scripts call the module as `IT.<function>` rather than `using .InclusionTools`, so they can be re-run in the same REPL session (e.g. VS Code): each `include` creates a new version of the module, and `using` two versions makes the exported names ambiguous.
 
 Differences to FDCSGm: there, the boundary velocities for elliptical inclusions were taken from the circular solution with radius $a$; here they come from the elliptical solution.
+
+## Closed-form amplification factors
+
+From the inclusion coefficient of eq. (55) (ψ_c = L z, with B₁, B₂ from eqs. 57–58 and ρ² = (t+1)/(t−1)) the amplification factors of an isolated elliptical inclusion follow in closed form. With $\mu = \Delta\eta = \eta_c/\eta_m$, aspect ratio $t = a/b \ge 1$, and $\beta$ the angle between the long axis and the background **shortening** direction:
+
+$$
+A_{\dot\varepsilon} = \frac{\dot\varepsilon_{II,inc}}{\dot\varepsilon_{bg}} = (t+1)^2 \sqrt{\frac{\sin^2 2\beta}{D_1^2} + \frac{\cos^2 2\beta}{D_2^2}}, \qquad D_1 = \mu(t^2+1) + 2t, \quad D_2 = (t^2+1) + 2\mu t,
+$$
+
+$$
+A_\tau = \frac{\tau_{II,inc}}{\tau_{bg}} = \mu A_{\dot\varepsilon}, \qquad A_\psi = \frac{\psi_{inc}}{\psi_{bg}} = \mu A_{\dot\varepsilon}^2 .
+$$
+
+- Valid for any combination of pure and simple shear: only the strain-rate part of the background flow enters, the vorticity drops out. Pure shear: $\beta = \theta$; simple shear (top to the right): $\beta = \theta + 45°$ (`shortening_angle`). In words: the shortening angle is the direction in which the background flow squeezes the material most (0° for our pure shear, 135° ≡ −45° for simple shear); β is the angle between the long axis and that direction.
+- Decomposition into a **contrast part** and a **shape/orientation part**:
+  $A_{\dot\varepsilon} = C(\mu)\, S(\mu, t, \beta)$, with $C = 2/(1+\mu)$ (circular inclusion, Eshelby) and $S$ the shape factor shown in `ShapeFactor_*.png`. $S = 1$ for a circle or for $\mu = 1$. $S$ depends on $\mu$ only between its weak limit $S_0(t,\beta) = \tfrac{(t+1)^2}{2}\sqrt{\sin^2 2\beta/(2t)^2 + \cos^2 2\beta/(t^2+1)^2}$ and its rigid limit $S_\infty(t, \beta) = S_0(t, \beta + 45°)$.
+- For a weak structure ($\mu \ll 1$): $A_{\dot\varepsilon} \approx 2 S_0(t, \beta)$, i.e. the contrast contributes at most a factor 2; the rest comes from elongation and orientation ($S_0$ up to $(t+1)^2/(4t)$ at $\beta = 45°$, i.e. $A_{\dot\varepsilon}$ up to $(t+1)^2/(2t)$).
+- Implemented in `InclusionTools.jl` (`amplification`, `contrast_factor`, `shapefactor`, `shortening_angle`), tested against the full solution in `check_analytical.jl` (300 random cases, general shear), and shown in `Decomposition.png` (`ParameterMaps.jl`).
 
 ## References
 

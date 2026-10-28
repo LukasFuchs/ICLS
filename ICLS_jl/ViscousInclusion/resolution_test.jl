@@ -21,8 +21,8 @@ function run_restest()
     P   =   (
         L           =   1000.0,
         H           =   1000.0,
-        a           =   200.0,          # a == b -> circle; e.g. a = 300, b = 100 for an ellipse
-        b           =   200.0,
+        a           =   300.0,          # a == b -> circle; e.g. a = 300, b = 100 for an ellipse
+        b           =   100.0,
         θ           =   0.0,
         ηm          =   1e23,
         ε̇bg         =   1e-15,

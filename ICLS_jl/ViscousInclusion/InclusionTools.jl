@@ -44,7 +44,8 @@ using Plots
 
 export EllipseSolution, evaluate, isinside, background_velocity, flow_rates,
        inclusion_values, SetupGrid, AnalyticalFields, RunInclusionModel,
-       PlotFields, PlotComparison, ellipse_outline, write_csv
+       PlotFields, PlotComparison, ellipse_outline, write_csv,
+       amplification, contrast_factor, shapefactor, shortening_angle
 
 # ======================================================================= #
 # 1. Analytical solution (Schmid & Podladchikov, 2003)
@@ -186,6 +187,60 @@ function flow_rates(deformation, ε̇bg)
         throw(ArgumentError("unknown deformation $deformation"))
     end
 end
+
+# ----------------------------------------------------------------------- #
+# Closed-form amplification factors (derived from eqs. 52-61; see README)
+# ----------------------------------------------------------------------- #
+"""
+    amplification(Δη, t, β) -> (ε, τ, ψ)
+
+Exact amplification factors of an isolated elliptical inclusion in a linear
+viscous matrix under any combination of pure and simple shear:
+
+    A_ε = ε̇_II,inc / ε̇_bg = (t+1)² √( sin²(2β)/D₁² + cos²(2β)/D₂² ),
+    D₁  = Δη (t²+1) + 2t,     D₂ = (t²+1) + 2Δη t,
+    A_τ = τ_II,inc / τ_bg = Δη A_ε,     A_ψ = ψ_inc / ψ_bg = Δη A_ε²,
+
+with Δη = ηc/ηm, aspect ratio t = a/b ≥ 1, and β [deg] the angle between the
+long axis and the background shortening direction (see `shortening_angle`).
+ε̇_bg is the second invariant of the background strain rate, τ_bg = 2ηm ε̇_bg,
+ψ_bg = τ_bg ε̇_bg. The vorticity of the background flow does not enter.
+"""
+function amplification(Δη, t, β)
+    t   >= 1 || throw(ArgumentError("t = a/b must be ≥ 1"))
+    D1  =   Δη * (t^2 + 1) + 2t
+    D2  =   (t^2 + 1) + 2Δη * t
+    s2, c2 = sincosd(2β)
+    Aε  =   (t + 1)^2 * sqrt(s2^2 / D1^2 + c2^2 / D2^2)
+    return (ε = Aε, τ = Δη * Aε, ψ = Δη * Aε^2)
+end
+
+"""
+    contrast_factor(Δη) = 2/(1+Δη)
+
+Amplification of a circular inclusion (contrast part of A_ε).
+"""
+contrast_factor(Δη) = 2.0 / (1.0 + Δη)
+
+"""
+    shapefactor(Δη, t, β) = A_ε / contrast_factor(Δη)
+
+Shape/orientation part of the amplification, i.e. the value relative to a
+circle with the same Δη (identical for ε̇_II and τ_II; squared for ψ).
+Bounded by the weak (Δη → 0) and rigid (Δη → ∞) limits, which are the same
+function shifted by 45° in β.
+"""
+shapefactor(Δη, t, β) = amplification(Δη, t, β).ε / contrast_factor(Δη)
+
+"""
+    shortening_angle(ε̇, γ̇) -> φ [deg]
+
+Direction of the background shortening axis (counter-clockwise from x) for
+the far-field flow vx = ε̇ x + γ̇ y, vy = -ε̇ y. The angle used in
+`amplification` is β = θ - φ (θ: orientation of the long axis).
+Pure shear (ε̇ < 0): φ = 0; simple shear (γ̇ > 0): φ = -45° (≡ 135°).
+"""
+shortening_angle(ε̇, γ̇) = 0.5 * rad2deg(atan(γ̇, 2ε̇)) + 90.0
 
 """
     ellipse_outline(s::EllipseSolution; n=301) -> (x, y)

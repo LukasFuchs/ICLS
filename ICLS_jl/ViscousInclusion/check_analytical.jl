@@ -124,4 +124,27 @@ reldiff(a, b) = abs(a - b) / max(abs(b), 1e-300)
         s   =   IT.EllipseSolution(a = 0.3, b = 0.1, ηm = 1.0, ηc = 1e12, ε̇ = 1.0, γ̇ = 0.0)
         @test reldiff(IT.inclusion_values(s).P / (-2.0), (t^2 - 1) / (2t)) < 1e-6
     end
+
+    @testset "6. Closed-form amplification factors" begin
+        # deterministic pseudo-random parameter sets (no Random dependency)
+        frac(k, a) = mod(k * a, 1.0)
+        for k = 1:300
+            t   =   10.0^(1.3 * frac(k, 0.6180339887))          # 1 ... 20
+            Δη  =   10.0^(-6 + 12 * frac(k, 0.7548776662))      # 1e-6 ... 1e6
+            θ   =   -180 + 360 * frac(k, 0.5698402910)
+            ε̇   =   -1 + 2 * frac(k, 0.3247179572)
+            γ̇   =   -2 + 4 * frac(k, 0.8191725134)
+            s   =   IT.EllipseSolution(a = t, b = 1.0, θ = θ, ηm = 1.0, ηc = Δη, ε̇ = ε̇, γ̇ = γ̇)
+            iv  =   IT.inclusion_values(s)
+            ε̇bg =   hypot(ε̇, γ̇ / 2)
+            A   =   IT.amplification(Δη, t, θ - IT.shortening_angle(ε̇, γ̇))
+            @test reldiff(A.ε, iv.εII / ε̇bg) < 1e-10
+            @test reldiff(A.τ, iv.τII / (2ε̇bg)) < 1e-10
+            @test reldiff(A.ψ, iv.ψ / (2ε̇bg^2)) < 1e-10
+        end
+        # circle: contrast factor; weak/rigid limits of the shape factor
+        @test reldiff(IT.amplification(0.3, 1.0, 17.0).ε, IT.contrast_factor(0.3)) < 1e-12
+        @test reldiff(IT.shapefactor(1e-12, 3.0, 45.0), 4.0 / 3.0) < 1e-9      # (t+1)²/(2t)/2
+        @test reldiff(IT.shapefactor(1e12, 3.0, 0.0), 4.0 / 3.0) < 1e-9
+    end
 end

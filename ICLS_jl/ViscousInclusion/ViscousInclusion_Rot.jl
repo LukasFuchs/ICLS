@@ -37,7 +37,7 @@ function run_rot()
         statmask    =   :pure,          # statistics on :pure or :geometric cells
         τmethod     =   :centroid,      # τ_II = 2ηε̇_II (:centroid) or from components
     )
-    avgms       =   [:geom] #[:arith, :harm, :geom]                  # averaging schemes to compare
+    avgms       =   [:arith, :harm, :geom]                  # averaging schemes to compare
     angles      =   collect(0.0:1.0:45.0)                  # θ [deg]
     outdir      =   joinpath(@__DIR__, "output", "Rot")
     # =================================================================== #

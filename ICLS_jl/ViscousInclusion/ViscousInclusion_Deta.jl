@@ -32,14 +32,15 @@ function run_deta()
         b           =   100.0,
         ηm          =   1e23,
         ε̇bg         =   1e-15,
-        deformation =   :SimpleShear,     # :PureShear or :SimpleShear
+        deformation =   :PureShear,     # :PureShear or :SimpleShear
         bc          =   :analytical,
         statmask    =   :pure,          # statistics on :pure or :geometric cells
         τmethod     =   :centroid,      # τ_II = 2ηε̇_II (:centroid) or from components
     )
-    avgms       =   [:geom] # [:arith, :harm, :geom]                  # averaging schemes to compare
+    avgms       =   [:arith, :harm, :geom]                  # averaging schemes to compare
     angles      =   [0.0, 22.5, 45.0, 90.0]                 # θ [deg]
     Δη          =   10.0 .^ range(-5, 5, length = 41)       # ηc/ηm
+    reuse_csv   =   true    # read existing CSVs (same setup) and only redo the figures
     outdir      =   joinpath(@__DIR__, "output", "Deta",
                         @sprintf("Ell_a_%g_b_%g_%s_nx%d", P.a, P.b, P.deformation, P.nc.x))
     # =================================================================== #
@@ -57,6 +58,17 @@ function run_deta()
 
     nrun, ntot = 0, length(avgms) * length(angles) * length(Δη)
     for avgm in avgms, θ in angles
+        csvfile =   joinpath(outdir, @sprintf("Data_%s_%s_%g.csv", P.deformation, avgm, θ))
+        if reuse_csv && isfile(csvfile)         # only redo the figures
+            lines   =   filter(!isempty, strip.(readlines(csvfile)))
+            if split(lines[1], ",") == header && length(lines) - 1 == length(Δη)
+                results[(avgm, θ)] = permutedims(hcat([parse.(Float64, split(l, ","))
+                                                       for l in lines[2:end]]...))
+                println("Read $(csvfile)")
+                nrun += length(Δη)
+                continue
+            end
+        end
         data    =   zeros(length(Δη), length(header))
         for (i, ηr) in enumerate(Δη)
             nrun += 1
@@ -78,8 +90,7 @@ function run_deta()
             data[i, :] .=   row
         end
         results[(avgm, θ)] = data
-        IT.write_csv(joinpath(outdir, @sprintf("Data_%s_%s_%g.csv", P.deformation, avgm, θ)),
-                     header, data)
+        IT.write_csv(csvfile, header, data)
     end
 
     # Figures ---------------------------------------------------------- #
@@ -89,7 +100,6 @@ function run_deta()
                  ψ   = "\$\\langle\\psi\\rangle/\\psi_{bg}\$")
     xlab    =   "\$\\Delta\\eta = \\eta_c/\\eta_m\$"
     colors  =   palette(:tab10)
-    styles  =   Dict(:arith => :solid, :harm => :dash, :geom => :dot)
     ttl     =   "$(P.deformation), a/b = $(P.a/P.b), $(P.nc.x)×$(P.nc.y)"
 
     # (a) one figure per averaging scheme: all orientations + analytical (black, dashed)
@@ -136,40 +146,71 @@ function run_deta()
     end
 
     # (b) comparison of the averaging schemes: deviation from the analytical
-    #     inclusion values, rows = quantity, columns = orientation
+    #     inclusion values, rows = quantity, columns = orientation.
+    #     |dev| on a log axis, so that deviations of 0.1 % and of 10^4 % are
+    #     both readable; color = averaging scheme, solid = numerical value too
+    #     high (dev > 0), dashed = too low (dev < 0).
+    #     Note: with τmethod = :centroid, τ_II = 2ηc ε̇_II inside the inclusion,
+    #     so the ε̇_II and τ_II rows are identical.
+    scol    =   Dict(:arith => :royalblue, :harm => :firebrick, :geom => :darkorange)
+    ylo     =   1e-2                                    # lower limit [%]
+    dev(avgm, θ, k) = (d = results[(avgm, θ)]; (d[:, col(k, :mean)] ./ d[:, cola(k)] .- 1) .* 100)
     panels  =   Any[]
-    for k in keys_, (j, θ) in enumerate(angles)
-        p   =   plot(xscale = :log10, framestyle = :box, legend = (k == :εII && j == 1) ? :topleft : false,
-                     title = k == :εII ? "θ = $(θ)°" : "", titlefontsize = 10,
-                     xlabel = k == :ψ ? xlab : "", guidefontsize = 9, tickfontsize = 7,
-                     ylabel = j == 1 ? "dev. " * labels[k] * " [%]" : "")
-        for avgm in avgms
-            d   =   results[(avgm, θ)]
-            plot!(p, d[:, 1], (d[:, col(k, :mean)] ./ d[:, cola(k)] .- 1) .* 100; color = :black,
-                  ls = styles[avgm], lw = 1.5, label = string(avgm))
+    for k in keys_
+        dmax    =   maximum(maximum(abs.(dev(avgm, θ, k))) for avgm in avgms, θ in angles)
+        yhi     =   10.0^ceil(log10(dmax))
+        ytk     =   10.0 .^ (log10(ylo):log10(yhi))
+        for (j, θ) in enumerate(angles)
+            p   =   plot(xscale = :log10, yscale = :log10, framestyle = :box,
+                         ylims = (ylo, yhi), yticks = ytk,
+                         legend = (k == :εII && j == 1) ? :topleft : false, legendfontsize = 7,
+                         title = k == :εII ? "θ = $(θ)°" : "", titlefontsize = 10,
+                         xlabel = k == :ψ ? xlab : "", guidefontsize = 9, tickfontsize = 7,
+                         ylabel = j == 1 ? "|dev.| " * labels[k] * " [%]" : "")
+            hline!(p, [1.0, 10.0]; color = :gray70, lw = 0.6, ls = :dot, label = "")
+            for avgm in avgms
+                x, dv   =   results[(avgm, θ)][:, 1], dev(avgm, θ, k)
+                plot!(p, x, ifelse.(dv .> 0, abs.(dv), NaN); color = scol[avgm], lw = 1.8,
+                      marker = :circle, ms = 2, msw = 0, label = string(avgm))
+                plot!(p, x, ifelse.(dv .< 0, abs.(dv), NaN); color = scol[avgm], lw = 1.8, ls = :dash,
+                      marker = :circle, ms = 2, msw = 0, label = "")
+            end
+            if k == :εII && j == 1          # legend entries for the line styles
+                plot!(p, [NaN], [NaN]; color = :black, lw = 1.2, label = "dev > 0")
+                plot!(p, [NaN], [NaN]; color = :black, lw = 1.2, ls = :dash, label = "dev < 0")
+            end
+            push!(panels, p)
         end
-        hline!(p, [0.0]; color = :gray, lw = 0.5, label = "")
-        push!(panels, p)
     end
     pB  =   plot(panels...; layout = (3, length(angles)), size = (300 * length(angles), 850),
                  left_margin = 5Plots.mm, bottom_margin = 3Plots.mm,
-                 plot_title = "$(ttl): deviation from analytical", plot_titlefontsize = 11)
+                 plot_title = "$(ttl): deviation of the inclusion means from analytical",
+                 plot_titlefontsize = 11)
     savefig(pB, joinpath(outdir, "Deviation_avgm_Deta_$(P.deformation).png"))
 
-    # (c) bulk errors vs Δη for the averaging schemes (θ = first angle)
-    θ0  =   angles[1]
-    pE  =   plot(xscale = :log10, yscale = :log10, framestyle = :box, xlabel = xlab,
-                 ylabel = "error [%]", legend = :outertopright, size = (800, 450),
-                 title = "$(ttl), θ = $(θ0)°", titlefontsize = 10)
+    # (c) bulk errors vs Δη for the averaging schemes (θ = first angle),
+    #     one panel per error measure, color = averaging scheme
+    θ0      =   angles[1]
     ecol(name) = findfirst(==(name), header)
-    for (j, (name, lab)) in enumerate((("L2_v_bulk", "L2 v bulk [% v]"), ("rms_P_mat", "rms P matrix [% τbg]"),
-                                       ("rms_P_inc", "rms P incl. [% τbg]")))
+    elist   =   (("L2_v_bulk", "L2 v bulk [% of |v|]"), ("rms_P_mat", "rms P matrix [% of τ_bg]"),
+                 ("rms_P_inc", "rms P inclusion [% of τ_bg]"))
+    emax    =   maximum(maximum(results[(avgm, θ0)][:, ecol(n)]) for avgm in avgms, (n, _) in elist)
+    eylims  =   (1e-3, 10.0^ceil(log10(emax)))
+    epanels =   Any[]
+    for (j, (name, lab)) in enumerate(elist)
+        p   =   plot(xscale = :log10, yscale = :log10, framestyle = :box, xlabel = xlab,
+                     ylabel = j == 1 ? "error [%]" : "", ylims = eylims, title = lab,
+                     titlefontsize = 9, legend = j == 1 ? :bottomleft : false, legendfontsize = 7)
         for avgm in avgms
             d   =   results[(avgm, θ0)]
-            plot!(pE, d[:, 1], max.(d[:, ecol(name)], 1e-6); color = colors[j], ls = styles[avgm],
-                  lw = 1.5, label = "$(lab), $(avgm)")
+            plot!(p, d[:, 1], d[:, ecol(name)]; color = scol[avgm], lw = 1.8, label = string(avgm))
         end
+        push!(epanels, p)
     end
+    pE  =   plot(epanels...; layout = (1, length(elist)), size = (1150, 400),
+                 left_margin = 5Plots.mm, bottom_margin = 5Plots.mm,
+                 plot_title = "$(ttl), θ = $(θ0)° (Δη = 1 is exact and lies below the axis)",
+                 plot_titlefontsize = 10)
     savefig(pE, joinpath(outdir, "Errors_avgm_Deta_$(P.deformation).png"))
 
     println("Results saved to $(outdir)")
