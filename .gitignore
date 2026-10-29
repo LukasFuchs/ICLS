@@ -7,6 +7,3 @@ ICLS_jl/**/output/
 *.jld2
 *.gif
 *.mp4
-
-# Summary PDF
-Summaries
