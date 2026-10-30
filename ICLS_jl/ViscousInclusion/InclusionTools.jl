@@ -277,7 +277,10 @@ strength_ratio(c_iwz, φ_iwz, c_m, φ_m, P) = yield_stress(c_iwz, φ_iwz, P) / y
 Maximum deviatoric stress (second invariant) in the matrix, normalized by
 τ_bg. It occurs on the interface and equals the larger of the strain-rate
 and stress amplification of the inclusion (weak inclusion: A_ε, stiff: A_τ).
-Found numerically from the full solution (tested in check_analytical.jl).
+Exact: the tangential strain rate and the shear traction are continuous across
+the interface, so the matrix stress there is √((τ_tt/Δη)² + τ_nt²) of the uniform
+inclusion stress, and the ellipse's tangent takes all directions. Checked
+against the full solution in check_analytical.jl.
 """
 interface_max(Δη, t, β) = (A = amplification(Δη, t, β); max(A.ε, A.τ))
 

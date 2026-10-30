@@ -102,7 +102,7 @@ $$
 For an isolated inclusion in an isoviscous matrix under a background stress $\tau_{bg} = 2\eta_m \dot\varepsilon_{bg}$ (instantaneous, onset only):
 
 - Yield stress (second invariant) as in LaMEM: $\tau_y = c\cos\varphi + P\sin\varphi$, with the lithostatic pressure $P = \rho g z$ when `p_litho_plast = 1`. The yield stress then depends on depth only, not on the dynamic pressure. Strength ratio $\Lambda = \tau_{y,IWZ}/\tau_{y,m}$, evaluated at one representative depth of the zone.
-- Stress inside the inclusion: uniform, $A_\tau \tau_{bg}$. Maximum matrix stress: on the interface, $\max(A_{\dot\varepsilon}, A_\tau)\,\tau_{bg}$ (found numerically from the full solution: 150 random cases, within 0.04 %; tested in `check_analytical.jl`). For a weak zone the matrix next to it carries $A_{\dot\varepsilon}\tau_{bg}$, i.e. $1/\Delta\eta$ times the stress in the zone, because it has to follow the zone's deformation along the interface with its higher viscosity.
+- Stress inside the inclusion: uniform, $A_\tau \tau_{bg}$. Maximum matrix stress: on the interface, $\max(A_{\dot\varepsilon}, A_\tau)\,\tau_{bg}$ (exact: the tangential strain rate and the shear traction are continuous across the interface, so the matrix stress there is $\sqrt{(\tau_{tt}/\Delta\eta)^2 + \tau_{nt}^2}$ of the uniform inclusion stress, and along the ellipse the tangent takes all directions; checked against the full solution in `check_analytical.jl`; interface stress concentrations of this kind: Gilormini & Montheillet, 1986). For a weak zone the matrix next to it carries $A_{\dot\varepsilon}\tau_{bg}$, i.e. $1/\Delta\eta$ times the stress in the zone, because it has to follow the zone's deformation along the interface with its higher viscosity.
 - Background stress at the onset of yielding, relative to the matrix strength (`yield_onset`):
   - zone yields first: $\tau_{bg}^*/\tau_{y,m} = \Lambda/A_\tau$,
   - matrix at the edges yields first: $\tau_{bg}^*/\tau_{y,m} = 1/\max(A_{\dot\varepsilon}, A_\tau)$,
@@ -112,5 +112,14 @@ For an isolated inclusion in an isoviscous matrix under a background stress $\ta
 - Limitations: one depth for the yield stress over the whole zone, no layering, free surface or density contrast, elliptical instead of rectangular cross-section (the matrix stress at the corners of a rectangle is expected to be higher), no evolution after the onset.
 
 ## References
+
+Bilby, B. A., Eshelby, J. D., & Kundu, A. K. (1975). The change of shape of a viscous ellipsoidal region embedded in a slowly deforming matrix having a different viscosity. *Tectonophysics*, 28(4), 265–274. https://doi.org/10.1016/0040-1951(75)90041-4
+
+Duretz, T., May, D. A., Gerya, T. V., & Tackley, P. J. (2011). Discretization errors and free surface stabilization in the finite difference and marker-in-cell method for applied geodynamics: A numerical study. *Geochemistry, Geophysics, Geosystems*, 12, Q07004. https://doi.org/10.1029/2011GC003567
+
+Gilormini, P., & Montheillet, F. (1986). Deformation of an inclusion in a viscous matrix and induced stress concentrations. *Journal of the Mechanics and Physics of Solids*, 34(2), 97–123. https://doi.org/10.1016/0022-5096(86)90032-3
+
+Moulas, E., Burg, J.-P., & Podladchikov, Y. (2014). Stress field associated with elliptical inclusions in a deforming matrix: Mathematical model and implications for tectonic overpressure in the lithosphere. *Tectonophysics*, 631, 37–49.
+
 
 Schmid, D. W., & Podladchikov, Y. Y. (2003). Analytical solutions for deformable elliptical inclusions in general shear. *Geophysical Journal International*, 155(1), 269–288. https://doi.org/10.1046/j.1365-246X.2003.02041.x
