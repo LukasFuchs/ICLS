@@ -7,6 +7,8 @@
 #   3. Velocity continuity across the inclusion boundary
 #   4. Far-field limit
 #   5. Rigid inclusion in pure shear, eq. (70) of Schmid & Podladchikov (2003)
+#   6. Closed-form amplification factors
+#   7. Maximum matrix stress on the interface and onset of yielding
 #
 # Run from the ICLS/ICLS_jl directory:
 #   julia --project=. ViscousInclusion/check_analytical.jl
@@ -146,5 +148,49 @@ reldiff(a, b) = abs(a - b) / max(abs(b), 1e-300)
         @test reldiff(IT.amplification(0.3, 1.0, 17.0).ε, IT.contrast_factor(0.3)) < 1e-12
         @test reldiff(IT.shapefactor(1e-12, 3.0, 45.0), 4.0 / 3.0) < 1e-9      # (t+1)²/(2t)/2
         @test reldiff(IT.shapefactor(1e12, 3.0, 0.0), 4.0 / 3.0) < 1e-9
+        # inverse-contrast symmetry of the shape factor
+        @test reldiff(IT.shapefactor(1 / 0.07, 4.0, 10.0), IT.shapefactor(0.07, 4.0, 55.0)) < 1e-12
+    end
+
+    @testset "7. Interface maximum and onset of yielding" begin
+        # maximum matrix ε̇_II just outside the interface (central differences of
+        # the full solution) vs. max(A_ε, A_τ); pure shear, ε̇_bg = 1, ηm = 1
+        frac(k, a) = mod(k * a, 1.0)
+        function matrix_max(s; n = 4000, δ = 2e-5, h = 1e-6)
+            m   =   0.0
+            for k = 0:n-1
+                ζ   =   s.ρ * (1 + δ) * cis(2π * k / n)
+                z   =   s.R * (ζ + 1 / ζ) * cis(deg2rad(s.θ))
+                x, y = real(z), imag(z)
+                vxp, vyp, _ = IT.evaluate(s, x + h, y); vxm, vym, _ = IT.evaluate(s, x - h, y)
+                vxq, vyq, _ = IT.evaluate(s, x, y + h); vxr, vyr, _ = IT.evaluate(s, x, y - h)
+                exx =   (vxp - vxm) / 2h;  eyy = (vyq - vyr) / 2h
+                exy =   0.5 * ((vxq - vxr) / 2h + (vyp - vym) / 2h)
+                m   =   max(m, sqrt(0.25 * (exx - eyy)^2 + exy^2))
+            end
+            return m
+        end
+        for k = 1:40
+            t   =   1.05 + 10 * frac(k, 0.6180339887)
+            Δη  =   10.0^(-4 + 8 * frac(k, 0.7548776662))
+            θ   =   90 * frac(k, 0.5698402910)
+            s   =   IT.EllipseSolution(a = t, b = 1.0, θ = θ, ηm = 1.0, ηc = Δη, ε̇ = -1.0)
+            @test reldiff(matrix_max(s), IT.interface_max(Δη, t, θ)) < 1e-3
+        end
+        # regime boundary: Λ = Δη (weak), Λ = 1 (stiff), for any shape and orientation
+        for (t, β) in ((1.0, 0.0), (3.0, 45.0), (8.0, 20.0))
+            @test IT.yield_onset(0.1, t, β, 0.09).regime == :zone
+            @test IT.yield_onset(0.1, t, β, 0.11).regime == :edges
+            @test IT.yield_onset(10.0, t, β, 0.99).regime == :zone
+            @test IT.yield_onset(10.0, t, β, 1.01).regime == :edges
+        end
+        # weak circle with Λ > Δη: edges yield at τ_bg = τ_y,m / 2
+        @test reldiff(IT.yield_onset(1e-9, 1.0, 0.0, 0.5).ratio, 0.5) < 1e-8
+        # no contrast: both yield at the same background stress
+        @test reldiff(IT.yield_onset(1.0, 3.0, 30.0, 0.6).ratio, 0.6) < 1e-12
+        # yield stress and strength ratio
+        @test IT.yield_stress(20e6, 0.0, 1e8) ≈ 20e6
+        @test IT.yield_stress(0.0, 30.0, 1e8) ≈ 0.5e8
+        @test IT.strength_ratio(20e6, 15.0, 20e6, 15.0, 3e8) ≈ 1.0
     end
 end

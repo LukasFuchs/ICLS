@@ -45,7 +45,8 @@ using Plots
 export EllipseSolution, evaluate, isinside, background_velocity, flow_rates,
        inclusion_values, SetupGrid, AnalyticalFields, RunInclusionModel,
        PlotFields, PlotComparison, ellipse_outline, write_csv,
-       amplification, contrast_factor, shapefactor, shortening_angle
+       amplification, contrast_factor, shapefactor, shortening_angle,
+       yield_stress, lithostatic_pressure, strength_ratio, interface_max, yield_onset
 
 # ======================================================================= #
 # 1. Analytical solution (Schmid & Podladchikov, 2003)
@@ -227,8 +228,10 @@ contrast_factor(Δη) = 2.0 / (1.0 + Δη)
 
 Shape/orientation part of the amplification, i.e. the value relative to a
 circle with the same Δη (identical for ε̇_II and τ_II; squared for ψ).
-Bounded by the weak (Δη → 0) and rigid (Δη → ∞) limits, which are the same
-function shifted by 45° in β.
+S equals its weak limit for Δη → 0, 1 at Δη = 1, and its rigid limit for
+Δη → ∞ (the weak limit shifted by 45° in β); S(1/Δη, t, β) = S(Δη, t, β+45°).
+In between it is not bounded by the limits (e.g. it dips below 1 near
+orientations where the weak limit is ≈ 1).
 """
 shapefactor(Δη, t, β) = amplification(Δη, t, β).ε / contrast_factor(Δη)
 
@@ -241,6 +244,64 @@ the far-field flow vx = ε̇ x + γ̇ y, vy = -ε̇ y. The angle used in
 Pure shear (ε̇ < 0): φ = 0; simple shear (γ̇ > 0): φ = -45° (≡ 135°).
 """
 shortening_angle(ε̇, γ̇) = 0.5 * rad2deg(atan(γ̇, 2ε̇)) + 90.0
+
+# ----------------------------------------------------------------------- #
+# Onset of yielding (instantaneous, isolated inclusion; see README)
+# ----------------------------------------------------------------------- #
+"""
+    yield_stress(c, φ, P)
+
+Drucker-Prager yield stress (second invariant) as in LaMEM:
+`c cos φ + P sin φ` for P > 0 and `c cos φ` otherwise; φ in degrees.
+With `p_litho_plast = 1`, LaMEM uses the lithostatic pressure for P.
+"""
+yield_stress(c, φ, P) = P > 0 ? c * cosd(φ) + P * sind(φ) : c * cosd(φ)
+
+"""
+    lithostatic_pressure(ρ, g, z) = ρ g z
+
+Lithostatic pressure at depth `z` (positive downward) for constant density.
+"""
+lithostatic_pressure(ρ, g, z) = ρ * g * z
+
+"""
+    strength_ratio(c_iwz, φ_iwz, c_m, φ_m, P) -> Λ
+
+Ratio of the yield stresses of the inclusion (IWZ) and the matrix at pressure P.
+"""
+strength_ratio(c_iwz, φ_iwz, c_m, φ_m, P) = yield_stress(c_iwz, φ_iwz, P) / yield_stress(c_m, φ_m, P)
+
+"""
+    interface_max(Δη, t, β) = max(A_ε, A_τ)
+
+Maximum deviatoric stress (second invariant) in the matrix, normalized by
+τ_bg. It occurs on the interface and equals the larger of the strain-rate
+and stress amplification of the inclusion (weak inclusion: A_ε, stiff: A_τ).
+Found numerically from the full solution (tested in check_analytical.jl).
+"""
+interface_max(Δη, t, β) = (A = amplification(Δη, t, β); max(A.ε, A.τ))
+
+"""
+    yield_onset(Δη, t, β, Λ) -> (ratio, regime)
+
+Background stress at which yielding starts, normalized by the matrix yield
+stress, τ_bg*/τ_y,m, for an isolated elliptical inclusion with viscosity
+contrast Δη, aspect ratio t, orientation β [deg] (as in `amplification`) and
+strength ratio Λ = τ_y,IWZ/τ_y,m (both at the same depth):
+
+    inclusion yields first (regime = :zone)  at  τ_bg*/τ_y,m = Λ / A_τ,
+    matrix at the interface first (:edges)   at  τ_bg*/τ_y,m = 1 / max(A_ε, A_τ).
+
+The regime boundary is Λ = Δη for Δη ≤ 1 and Λ = 1 for Δη ≥ 1, independent of
+shape and orientation. Uniform yield stress over the inclusion (one depth),
+no layering or free surface; onset only (no evolution after yielding).
+"""
+function yield_onset(Δη, t, β, Λ)
+    A       =   amplification(Δη, t, β)
+    zone    =   Λ / A.τ
+    edges   =   1.0 / max(A.ε, A.τ)
+    return zone <= edges ? (ratio = zone, regime = :zone) : (ratio = edges, regime = :edges)
+end
 
 """
     ellipse_outline(s::EllipseSolution; n=301) -> (x, y)

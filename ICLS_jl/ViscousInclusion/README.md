@@ -4,7 +4,7 @@ Instantaneous Stokes solutions for a circular or elliptical viscous inclusion in
 
 ## Authorship and provenance
 
-The Julia scripts in this directory (`InclusionTools.jl`, `ViscousInclusion.jl`, `ViscousInclusion_Deta.jl`, `ViscousInclusion_Rot.jl`, `resolution_test.jl`, `compare_averaging.jl`, `check_analytical.jl`, `ParameterMaps.jl`) and this README were written by Claude (Anthropic, model Claude Opus 5.5) in October 2026, at the request and under the direction of Lukas Fuchs (Goethe University Frankfurt), who also ran all models and reviewed the intermediate results.
+The Julia scripts in this directory (`InclusionTools.jl`, `ViscousInclusion.jl`, `ViscousInclusion_Deta.jl`, `ViscousInclusion_Rot.jl`, `resolution_test.jl`, `compare_averaging.jl`, `check_analytical.jl`, `ParameterMaps.jl`, `YieldCriterion.jl`) and this README were written by Claude (Anthropic, model Claude Opus 5.5) in October 2026, at the request and under the direction of Lukas Fuchs (Goethe University Frankfurt), who also ran all models and reviewed the intermediate results.
 
 - The analytical solution for the elliptical inclusion was implemented from Schmid & Podladchikov (2003), eqs. 48–64. Before the Julia port it was verified against an independent Python implementation (not part of this repository); the reference values in `check_analytical.jl` come from that implementation.
 - The model setup and the solver loop in `RunInclusionModel` follow the viscous inclusion example of GeoModBox.jl (`examples/StokesEquation/2D/ViscousInclusion.jl`) closely and use its functions; GeoModBox itself is not modified.
@@ -20,9 +20,10 @@ The Julia scripts in this directory (`InclusionTools.jl`, `ViscousInclusion.jl`,
 | `ViscousInclusion_Deta.jl` | Sweep over the viscosity contrast $\Delta\eta = \eta_c/\eta_m$ for several orientations $\theta$ and averaging schemes (`avgms`), including a figure comparing the schemes. Stores mean/max/min/std of $\dot{\varepsilon}_{II}$, $\tau_{II}$, $\psi$ in inclusion and matrix (CSV) and plots them together with the analytical inclusion values. |
 | `ViscousInclusion_Rot.jl` | Sweep over the orientation $\theta$ for a fixed viscosity contrast and several averaging schemes. |
 | `ParameterMaps.jl` | Analytical maps of the inclusion values ε̇_II, τ_II, ψ over orientation θ and viscosity contrast Δη for several aspect ratios, the shape factor relative to a circular inclusion, the amplification factors A = value/background (e.g. ε̇_II/ε̇_bg) with labeled contours, and summary curves (weak and rigid limits, maximum dissipation), the decomposition amplification = contrast part × shape part (closed form), and maps of A_ε and S over orientation β and aspect ratio a/b for fixed contrasts. No numerical model is solved. |
+| `YieldCriterion.jl` | Onset of yielding of an isolated inclusion (inherited weak zone) in an isoviscous matrix with a Drucker–Prager yield stress and lithostatic pressure (as in LaMEM with `p_litho_plast = 1`): which yields first (zone or matrix at its edges) and at which background stress, over viscosity contrast, strength ratio, orientation and aspect ratio; strength ratio versus depth for given cohesion and friction. No numerical model is solved. |
 | `resolution_test.jl` | Grid convergence (e.g. 50²–400²) of the inclusion means and of the bulk velocity and pressure errors for a weak and a strong inclusion and all averaging schemes, including the observed convergence order. |
 | `compare_averaging.jl` | Sensitivity of errors and inclusion statistics to the viscosity averaging (`:arith`, `:harm`, `:geom`) and to the cells used for the statistics. |
-| `check_analytical.jl` | Tests of the analytical solution (reference values, circular limit vs. `Dani_Solution_vec!`, continuity across the interface, far field, rigid-inclusion limit) and of the closed-form amplification factors. |
+| `check_analytical.jl` | Tests of the analytical solution (reference values, circular limit vs. `Dani_Solution_vec!`, continuity across the interface, far field, rigid-inclusion limit), of the closed-form amplification factors, and of the maximum matrix stress at the interface used for the onset of yielding. |
 
 ## Usage
 
@@ -33,6 +34,8 @@ julia --project=. ViscousInclusion/check_analytical.jl     # run once to verify 
 julia --project=. ViscousInclusion/ViscousInclusion.jl
 julia --project=. ViscousInclusion/ViscousInclusion_Deta.jl
 julia --project=. ViscousInclusion/ViscousInclusion_Rot.jl
+julia --project=. ViscousInclusion/ParameterMaps.jl
+julia --project=. ViscousInclusion/YieldCriterion.jl
 ```
 
 For multithreaded marker interpolation add, e.g., `-t 4`. The model parameters are defined at the top of each script. Results are written to `ViscousInclusion/output/` (not tracked by git).
@@ -93,6 +96,20 @@ $$
   For given $\mu$ and $t$, $A_{\dot\varepsilon}(\beta)^2 = A_{\dot\varepsilon}(0°)^2 \cos^2 2\beta + A_{\dot\varepsilon}(45°)^2 \sin^2 2\beta$, so all orientations lie between the $\beta = 0°$ and $45°$ curves (`AmpBand.png`).
 - For a weak structure ($\mu \ll 1$): $A_{\dot\varepsilon} \approx 2 S_0(t, \beta)$, i.e. the contrast contributes at most a factor 2; the rest comes from elongation and orientation ($S_0$ up to $(t+1)^2/(4t)$ at $\beta = 45°$, i.e. $A_{\dot\varepsilon}$ up to $(t+1)^2/(2t)$).
 - Implemented in `InclusionTools.jl` (`amplification`, `contrast_factor`, `shapefactor`, `shortening_angle`), tested against the full solution in `check_analytical.jl` (300 random cases, general shear), and shown in `Decomposition.png` (`ParameterMaps.jl`).
+
+## Onset of yielding
+
+For an isolated inclusion in an isoviscous matrix under a background stress $\tau_{bg} = 2\eta_m \dot\varepsilon_{bg}$ (instantaneous, onset only):
+
+- Yield stress (second invariant) as in LaMEM: $\tau_y = c\cos\varphi + P\sin\varphi$, with the lithostatic pressure $P = \rho g z$ when `p_litho_plast = 1`. The yield stress then depends on depth only, not on the dynamic pressure. Strength ratio $\Lambda = \tau_{y,IWZ}/\tau_{y,m}$, evaluated at one representative depth of the zone.
+- Stress inside the inclusion: uniform, $A_\tau \tau_{bg}$. Maximum matrix stress: on the interface, $\max(A_{\dot\varepsilon}, A_\tau)\,\tau_{bg}$ (found numerically from the full solution: 150 random cases, within 0.04 %; tested in `check_analytical.jl`). For a weak zone the matrix next to it carries $A_{\dot\varepsilon}\tau_{bg}$, i.e. $1/\Delta\eta$ times the stress in the zone, because it has to follow the zone's deformation along the interface with its higher viscosity.
+- Background stress at the onset of yielding, relative to the matrix strength (`yield_onset`):
+  - zone yields first: $\tau_{bg}^*/\tau_{y,m} = \Lambda/A_\tau$,
+  - matrix at the edges yields first: $\tau_{bg}^*/\tau_{y,m} = 1/\max(A_{\dot\varepsilon}, A_\tau)$,
+  - whichever is smaller. The regime boundary is $\Lambda = \Delta\eta$ for $\Delta\eta \le 1$ and $\Lambda = 1$ for $\Delta\eta \ge 1$, independent of shape and orientation. A weak zone that is weaker in viscosity than in strength ($\Lambda > \Delta\eta$) therefore first makes the matrix at its edges yield.
+- Shape and orientation enter only through $A_{\dot\varepsilon}$ and $A_\tau$, so β = 45° (long axis at 45° to the shortening direction) is the most favourable orientation. The Drucker–Prager inclusion is isotropic (a weak volume, not a weak plane), so there is no separate frictional optimum orientation.
+- Mapping to the LaMEM IWZ geometry in the x–z plane: a/b = depth extent / width (if larger than 1), and with vertical shortening (extension in x) β equals the dip angle measured from the z-axis.
+- Limitations: one depth for the yield stress over the whole zone, no layering, free surface or density contrast, elliptical instead of rectangular cross-section (the matrix stress at the corners of a rectangle is expected to be higher), no evolution after the onset.
 
 ## References
 
